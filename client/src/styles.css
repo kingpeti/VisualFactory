@@ -1516,6 +1516,7 @@ input.inline:focus {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  touch-action: none; /* a swipe scrolls the terminal (LiveTerminal.tsx); don't let the browser pan the panel instead */
 }
 /* A read-only terminal keeps the agent's own size, which can be bigger than its tile */
 .live-term-readonly .live-term-screen {
