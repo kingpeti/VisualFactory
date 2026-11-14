@@ -1,0 +1,1052 @@
+{
+ "vision": "Turn CubeFarm from a GitHub issue -> PR -> QA -> merge office into a durable, artifact-driven workflow execution platform (\"CubeFarm Next\"). Each repository or project selects its own versioned, validated workflow (planning, spec drafting/revision/independent review, deterministic decisions, human approval, coding via the existing CubeFarm engine, specialist security/UX/architecture/API reviews, CI checks, releases, external events). Illustrative per-context workflows: Angular/UI repo (plan -> UX spec -> UX review -> approval -> dev -> a11y/security/browser QA -> merge), NestJS backend (plan -> API/security spec -> arch+security review -> dev -> test/release gates), shared package (compat assessment -> consumer mapping -> versioned release -> downstream validation), GitOps (impact spec -> infra security -> preflight -> authorized promotion -> health verification), physical project (requirements -> CAD/design spec -> BOM review -> procurement decision -> build -> physical validation, no GitHub PR required). A portfolio/initiative layer coordinates related repos and non-GitHub projects with typed dependencies. Success = a maintainer points one repo at an approved versioned workflow, runs an initiative through planning and two spec revisions, stops at an approval gate, resumes without regenerating approved artifacts, builds a PR, runs separate security and QA stages, and merges only when required approvals and checks match the current PR head; workflow-less repos behave exactly as today; every transition, LLM attempt, decision, cost estimate and side effect is observable and auditable. Rollout: MVP = single repo sequential workflow; V1 = conditional stages, independent reviewers, budgets, workflow settings/status UI, GitHub CI integration; V2 = parallel stages, multi-repo initiative DAG, external adapters, physical workflows, deployment verification, optional hosted/multi-user. Explicit MVP non-goals: general BPMN engine, automated procurement, autonomous production deploy, multi-tenant SaaS/RBAC, CAD generation, formal correctness guarantees.",
+ "executive_decision": "Keep CubeFarm's coding engine and wrap it as an execution adapter (cubefarm.development) behind a new workflow domain layer (server/workflows/, shared/workflows/) built alongside Swarm, not inside the ~5,535-line swarm.ts. Order: (1) freeze source/regression baseline and define workflow, project/work-item identity, versioned artifacts, stage execution, event/approval contracts; (2) small sequential runner with ai.task, review, decision, approval, cubefarm.development executors plus a default compatibility template; (3) plan/spec authoring, revision, review and human approval before coding with exact spec version pinning; (4) repo-specific security/UX/architecture/compatibility stages and SHA-bound merge gates; (5) conditional/parallel branches, external checks, cross-repo release dependencies, non-GitHub adapters; (6) visual workflow designer last. Engine is deterministic and pure; AI only produces structured artifacts/recommendations; server validates schema, authority, freshness and hashes. Storage: WorkflowStore abstraction with an embedded SQLite-compatible local store if cross-OS npm packaging passes (PostgreSQL optional later), legacy state.json untouched. Proposed next decision: approve an MVP vertical slice (one repo: plan -> spec -> independent review -> revise -> human approval -> create issue -> existing issue/QA pipeline, immutable artifacts, restart recovery) before any multi-repo/GitOps/physical work. Note: the RFC assigns no per-FR priority; priorities below marked \"derived\" are mapped from its P0/P1/P2 release slices and backlog placement.",
+ "goals": [
+  "G01 Repo-specific processes: versioned workflow per repo from template or checked-in .cubefarm/workflow.yaml; workflow-less repos keep exactly the current lifecycle.",
+  "G02 Work-item abstraction: start from user request, project idea, existing issue, repo event or external event; no GitHub issue needed at inception.",
+  "G03 Planning: scope, code and linked repos, risks, alternatives, dependencies, tasks, estimates/assumptions, validation criteria.",
+  "G04 Specification authoring: versioned Markdown specs with stable requirement IDs, design decisions, NFRs, tests, out-of-scope.",
+  "G05 Spec review and revision: independent reviewer with structured findings; writer revises only relevant sections; bounded loop with evidence; final contradiction pass.",
+  "G06 Decisions: deterministic branches, AI recommendations and human approval gates are distinct; decisions reference exact artifact version and policy.",
+  "G07 Execution: approved specs produce issues; CubeFarm implements and QAs; specialist security/UX/architecture/compatibility reviewers in fresh sessions with pass/fail/blocked/skipped plus evidence.",
+  "G08 Safe merge/delivery: latest PR SHA, required review verdicts and CI/deployment checks gate merges; no stale approval, silent bypass or unbounded retries.",
+  "G09 Multi-repo initiatives: top-level plan spawns coordinated work items across package/consumer/backend/frontend/GitOps/deployment projects with typed dependencies.",
+  "G10 Non-GitHub projects: physical design, BOM, suppliers, build/prototype/test milestones via generic artifact and human/external stages.",
+  "G11 Cost controls: per-stage model/effort, per-run/project limits, actual/estimated/unknown usage, zero-model idle polling, conditional specialists, approval for expensive stages.",
+  "G12 Operator experience: visual status of stages/attempts/artifacts/reviews/approvals, pending decisions, cost, evidence, blockers; list/graph first, editable designer later.",
+  "G13 Reliability: durable resumability, idempotent external writes, deterministic transitions, auditability, replay-safe recovery.",
+  "G14 Security: explicit execution permissions for tools and external writes, human identity/approval auth, least privilege, safe defaults; acknowledges local unsandboxed runner.",
+  "G15 Backward compatibility: no-workflow repos, demo, REST, WebSockets, CLI login and existing QA/merge keep working."
+ ],
+ "requirements": [
+  {
+   "id": "FR-001",
+   "priority": "P0 domain model (ADR-015) / P2 physical execution (derived)",
+   "text": "Create Project with type software_repo | software_multi_repo | physical | generic and optional external locator; creating a non-GitHub project does not call connectRepo()."
+  },
+  {
+   "id": "FR-002",
+   "priority": "P0 validation / P1 selection UI (derived)",
+   "text": "Assign workflow template and optional repo-local override; validate before activation; operator can preview resolved config/diff."
+  },
+  {
+   "id": "FR-003",
+   "priority": "P0 (derived)",
+   "text": "Workflow run pins canonicalized validated definition SHA-256 and policy version; definition updates only affect new runs by default."
+  },
+  {
+   "id": "FR-004",
+   "priority": "P0 (derived: basic run status UI)",
+   "text": "Workflow identifier, active version and run status visible on project/repo dashboard."
+  },
+  {
+   "id": "FR-005",
+   "priority": "P0 (derived)",
+   "text": "Existing repo without workflow mapping uses legacy behavior with no extra LLM sessions or approval gates."
+  },
+  {
+   "id": "FR-010",
+   "priority": "P0 (derived)",
+   "text": "Work item stores request, intended outcome, relevant repos/projects, constraints, references and acceptance tests."
+  },
+  {
+   "id": "FR-011",
+   "priority": "P0 (derived)",
+   "text": "Planning stage inspects linked repos with scoped read access, proposes alternatives with rationale, risks, dependencies, scope boundaries; outputs machine-readable summary + Markdown artifact."
+  },
+  {
+   "id": "FR-012",
+   "priority": "P0 (derived)",
+   "text": "Spec writer consumes approved/draft plan and explicit template; creates stable REQ-###/NFR-### IDs, architecture, behavioral/API/data requirements, failure paths, verification."
+  },
+  {
+   "id": "FR-013",
+   "priority": "P0 (derived)",
+   "text": "Reviewer returns structured findings (ID, severity, category, evidence, source location, recommendation, blocking flag); review never silently mutates the spec."
+  },
+  {
+   "id": "FR-014",
+   "priority": "P0 (derived)",
+   "text": "Revision references finding IDs, creates a new immutable artifact version, includes resolved/unresolved finding mapping."
+  },
+  {
+   "id": "FR-015",
+   "priority": "P0 (derived)",
+   "text": "Review loop limits retries/visits and total budget; exceeding thresholds routes to human resolution, never infinite cycles."
+  },
+  {
+   "id": "FR-016",
+   "priority": "P0 (derived)",
+   "text": "Accepted spec has a human-readable title and immutable content hash; generated issues link to the exact accepted version."
+  },
+  {
+   "id": "FR-017",
+   "priority": "P0 (derived: user story 4, T-027)",
+   "text": "Significant spec modifications after acceptance invalidate downstream stages per configured impact policy (at least explicit approval or review)."
+  },
+  {
+   "id": "FR-020",
+   "priority": "P0 (derived)",
+   "text": "Decision results have typed outcomes, options, constraints, evidence and actor/source; engine enforces routing; AI cannot invent destination IDs."
+  },
+  {
+   "id": "FR-021",
+   "priority": "P0 (derived)",
+   "text": "Deterministic policy decisions are computed without invoking a model."
+  },
+  {
+   "id": "FR-022",
+   "priority": "unstated (ai.recommendation is not in the P0 slice)",
+   "text": "AI decision stage creates a recommendation only; operator approval is separate unless policy explicitly allows low-impact automatic selection."
+  },
+  {
+   "id": "FR-023",
+   "priority": "P0 (derived)",
+   "text": "Human gate stores decision, authenticated principal, approved artifact digest, policy version, timestamp, scope, optional comment."
+  },
+  {
+   "id": "FR-024",
+   "priority": "P0 (derived)",
+   "text": "Rejected or changes-requested routes to a configured stage or terminates; no implicit continue."
+  },
+  {
+   "id": "FR-025",
+   "priority": "P0 as local_operator (ADR-008) / P2 real RBAC (derived)",
+   "text": "Approvers cannot self-attest through prompts; identity and permission enforced at the API boundary."
+  },
+  {
+   "id": "FR-030",
+   "priority": "P0 (derived)",
+   "text": "Issues and PRs produced through the existing CubeFarm bridge; no duplicate issue creation on retry."
+  },
+  {
+   "id": "FR-031",
+   "priority": "P1 specialist reviews / P0 spec-review independence (derived)",
+   "text": "Review stages use independent contexts by default; reviewer can inspect diff/source and external check evidence."
+  },
+  {
+   "id": "FR-032",
+   "priority": "P1 (derived)",
+   "text": "Stage selection supports changed-path predicates, labels, issue type, risk flags, explicit user choices; untrusted PR metadata cannot skip security-critical policies."
+  },
+  {
+   "id": "FR-033",
+   "priority": "P0 stale-approval + required checks / P1 checks stage (derived)",
+   "text": "Merge requires all mandatory reviewer approvals fresh on current PR SHA and policy version plus required named GitHub statuses; pending/failing/missing block."
+  },
+  {
+   "id": "FR-034",
+   "priority": "P0/P1 (derived: T-060 is P0, WF-019 is Phase 3)",
+   "text": "Fixes invalidate affected reviews; conservative default reruns all required code-review stages after head changes; selective invalidation later needs provenance."
+  },
+  {
+   "id": "FR-035",
+   "priority": "P0 via WF-015 acceptance (derived)",
+   "text": "Manual override, if provided, is explicit, privileged, audited and distinguishable from automated approval; decide whether security hard gates are non-overridable."
+  },
+  {
+   "id": "FR-040",
+   "priority": "P1 one example / P2 DAG (derived)",
+   "text": "Dependency graph references globally unique project/artifact/release/work-item IDs; repo#issue alone is insufficient."
+  },
+  {
+   "id": "FR-041",
+   "priority": "P1/P2 (derived)",
+   "text": "Cross-repo readiness can require artifact published, package version available, consumer CI passed, deployment health confirmed, human milestone accepted."
+  },
+  {
+   "id": "FR-042",
+   "priority": "P2 (derived: WF-024)",
+   "text": "One initiative-level architecture/spec feeds several repo-level runs, avoiding divergent designs."
+  },
+  {
+   "id": "FR-043",
+   "priority": "P2 (derived)",
+   "text": "GitOps promotion requires observed upstream outcomes, not mere PR merge; deploy/promotion side effects require authorized policy."
+  },
+  {
+   "id": "FR-044",
+   "priority": "P2 (derived)",
+   "text": "Physical workflow stores CAD/drawing/BOM/inspection documents, purchase requests and manual validation results without a GitHub repo."
+  },
+  {
+   "id": "FR-045",
+   "priority": "P2 (derived)",
+   "text": "Hardware/procurement execution defaults to proposing, never actually purchasing."
+  },
+  {
+   "id": "FR-050",
+   "priority": "P0 (derived: cost records by stage)",
+   "text": "Every model attempt records provider/CLI, requested model, effort, elapsed, attempts, reported USD, observed or estimated token classes and cache status where available, with secret redaction."
+  },
+  {
+   "id": "FR-051",
+   "priority": "P1 (derived: stage budgets) but T-048 is listed P0",
+   "text": "Stage/work-item/project budget decisions are deterministic; exceeding a limit pauses new attempts, preserves ongoing work, reports possible overrun."
+  },
+  {
+   "id": "FR-052",
+   "priority": "P0 (derived)",
+   "text": "Scheduler/pollers use zero LLM calls when idle; no periodic CEO LLM review required for correctness."
+  },
+  {
+   "id": "FR-053",
+   "priority": "P1 (derived)",
+   "text": "Operator sees which stages consumed time/tokens and why they repeated; unit economics per accepted spec/merged PR/milestone."
+  },
+  {
+   "id": "NFR-001",
+   "priority": "unstated (cross-cutting)",
+   "text": "Determinism: same persisted state, definition and verified events yield the same next actions."
+  },
+  {
+   "id": "NFR-002",
+   "priority": "unstated (cross-cutting)",
+   "text": "Durable safety: crash between external action and commit reconciles without duplicate side effects or silent loss."
+  },
+  {
+   "id": "NFR-003",
+   "priority": "unstated (cross-cutting)",
+   "text": "Security: default deny for undefined tool permissions and destructive external operations in new stages; local agent shell remains a known separate risk."
+  },
+  {
+   "id": "NFR-004",
+   "priority": "unstated (cross-cutting)",
+   "text": "Observability: correlation IDs portfolio -> initiative -> work item -> run -> stage run -> external side effect."
+  },
+  {
+   "id": "NFR-005",
+   "priority": "unstated (cross-cutting)",
+   "text": "Performance: legacy floors incur no additional LLM usage, significant polling cost or forced DB dependency without adoption."
+  },
+  {
+   "id": "NFR-006",
+   "priority": "unstated (cross-cutting)",
+   "text": "Portability: Windows/macOS/Linux and Node >=22 packaging keep working; storage driver chosen for npm distribution."
+  },
+  {
+   "id": "NFR-007",
+   "priority": "unstated (cross-cutting)",
+   "text": "Compatibility: old serialized state, REST clients, demo flows, PR integrations keep functioning."
+  },
+  {
+   "id": "NFR-008",
+   "priority": "unstated (cross-cutting)",
+   "text": "Privacy: minimize secrets/PII in artifacts and logs; redact credentials; retention and access control."
+  },
+  {
+   "id": "NFR-009",
+   "priority": "unstated (cross-cutting)",
+   "text": "Usability: one screen shows stage, blocker, artifact diff, findings and required next human action."
+  },
+  {
+   "id": "NFR-010",
+   "priority": "unstated (cross-cutting)",
+   "text": "Cost transparency: never present a CLI-reported API-equivalent estimate as an actual subscription charge."
+  },
+  {
+   "id": "SLICE-P0-1",
+   "priority": "P0",
+   "text": "Workflow definition validation, immutable version pinning, built-in default compatibility workflow."
+  },
+  {
+   "id": "SLICE-P0-2",
+   "priority": "P0",
+   "text": "Durable workflow run with sequential stages, bounded revision loops, stable IDs, action audit."
+  },
+  {
+   "id": "SLICE-P0-3",
+   "priority": "P0",
+   "text": "Planning + spec writing + spec review + spec revision + deterministic decisions + human approvals."
+  },
+  {
+   "id": "SLICE-P0-4",
+   "priority": "P0",
+   "text": "Filesystem/Git artifact versioning with immutable content hash; review inputs and approvals pinned to hash."
+  },
+  {
+   "id": "SLICE-P0-5",
+   "priority": "P0",
+   "text": "Existing development/QA/merge invoked as a stage after approval without changing old workflows."
+  },
+  {
+   "id": "SLICE-P0-6",
+   "priority": "P0",
+   "text": "Restart recovery, idempotent transitions, no duplicate GitHub issue creation."
+  },
+  {
+   "id": "SLICE-P0-7",
+   "priority": "P0",
+   "text": "No auto-merge with stale approvals; configurable required-check set and explicit 'none' handling."
+  },
+  {
+   "id": "SLICE-P0-8",
+   "priority": "P0",
+   "text": "Cost records by stage: reported USD plus raw token fields when available; unknown labeled."
+  },
+  {
+   "id": "SLICE-P0-9",
+   "priority": "P0",
+   "text": "Basic manager UI for run status, spec diff, review findings, approval."
+  },
+  {
+   "id": "SLICE-P0-10",
+   "priority": "P0",
+   "text": "Tests including no-workflow backward compatibility."
+  },
+  {
+   "id": "SLICE-P1-1",
+   "priority": "P1",
+   "text": "Stage-specific model/effort/tool capabilities via config, not fixed agent persona."
+  },
+  {
+   "id": "SLICE-P1-2",
+   "priority": "P1",
+   "text": "Security, UX, architecture, API compatibility, performance review stages."
+  },
+  {
+   "id": "SLICE-P1-3",
+   "priority": "P1",
+   "text": "File-path/label/metadata conditions; approved stage skips recorded."
+  },
+  {
+   "id": "SLICE-P1-4",
+   "priority": "P1",
+   "text": "GitHub checks as deterministic stages, required-check enforcement, reasoned fix feedback."
+  },
+  {
+   "id": "SLICE-P1-5",
+   "priority": "P1",
+   "text": "UI for per-repo workflow selection, history, pause/resume."
+  },
+  {
+   "id": "SLICE-P1-6",
+   "priority": "P1",
+   "text": "Stage budgets, concurrency, usage-based routing, provider fallback where auth permits."
+  },
+  {
+   "id": "SLICE-P1-7",
+   "priority": "P1",
+   "text": "Cross-repo explicit dependencies with one tracked package -> consumer -> GitOps example."
+  },
+  {
+   "id": "SLICE-P2-1",
+   "priority": "P2",
+   "text": "Parallel fork/join, multi-repo DAG, project priorities, critical-path scheduling."
+  },
+  {
+   "id": "SLICE-P2-2",
+   "priority": "P2",
+   "text": "External event/webhook adapters, package registry, deployment readiness, rollback workflow."
+  },
+  {
+   "id": "SLICE-P2-3",
+   "priority": "P2",
+   "text": "Non-GitHub projects, physical prototype/BOM/procurement/validation adapters."
+  },
+  {
+   "id": "SLICE-P2-4",
+   "priority": "P2",
+   "text": "Rich workflow designer, multi-approver, team RBAC if server goes beyond loopback."
+  },
+  {
+   "id": "SLICE-P2-5",
+   "priority": "P2",
+   "text": "Hosting/HA/remote workers, retry policies at scale, distributed leasing, report search, analytics."
+  }
+ ],
+ "backlog": [
+  {
+   "id": "WF-001",
+   "phase": "Phase 0 - Baseline and compatibility infrastructure",
+   "title": "Freeze upstream baseline and safety tests",
+   "depends_on": [],
+   "scope": "Record commit SHA, source map, characterize legacy behavior; add tests only if missing that old issue/QA/merge works with no workflow config. Files: existing server/swarm.ts, shared/types.ts, server/mergeGate.ts, server/reconcile.ts, server/index.ts, server/demo.ts and their tests.",
+   "acceptance": "Documented baseline and regression fixtures; no runtime feature changes; no paid model calls; isolated demo E2E when appropriate.",
+   "effort": "Risk: low; no per-ticket estimate"
+  },
+  {
+   "id": "WF-002",
+   "phase": "Phase 0",
+   "title": "Shared domain schemas",
+   "depends_on": [
+    "WF-001"
+   ],
+   "scope": "Serializable Zod + TS types for Project, WorkItem, WorkflowDefinition, StageDefinition, WorkflowRun, StageRun, ArtifactRef, Finding, Decision, VerifiedFact, Dependency, ExternalOperation in new shared/workflows/*.ts (start-prompt variant also lists StageAttempt, DependencyRef).",
+   "acceptance": "Every exposed API/event type Zod-validated; exhaustive discriminated unions; fixture tests; AgentTask untouched.",
+   "effort": "unestimated (suggested first coding ticket)"
+  },
+  {
+   "id": "WF-003",
+   "phase": "Phase 0",
+   "title": "Workflow config parser/compiler",
+   "depends_on": [
+    "WF-002"
+   ],
+   "scope": "Parse YAML or JSON; validate unique IDs, executor schema, references, bounded cycles, permissions, resolved prompts/templates; canonical digest. Files: server/workflows/definition.ts, validate.ts, conditions.ts, tests. Choose YAML dependency carefully.",
+   "acceptance": "Malformed configs fail closed with actionable errors; stable SHA across key order/formatting; no eval/shell; deterministic trust-ranked conditions; default legacy template available. Tests T-001..T-014.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-004",
+   "phase": "Phase 0",
+   "title": "Transactional WorkflowStore",
+   "depends_on": [
+    "WF-002",
+    "ADR-006"
+   ],
+   "scope": "Storage interface; SQLite-compatible local implementation with cross-platform npm packaging checks; migrations, unique idempotency keys, backups; legacy state file intact. Files: server/workflows/store/, config/packaging, tests.",
+   "acceptance": "Atomic stage+event+outbox writes, optimistic CAS, durable reopen, attempt uniqueness, migrations/backups; no mandatory external DB; no writes to live SWARM_HOME.",
+   "effort": "unestimated (alternative first spike)"
+  },
+  {
+   "id": "WF-005",
+   "phase": "Phase 1 - Durable local workflow execution",
+   "title": "Deterministic graph transition engine",
+   "depends_on": [
+    "WF-003",
+    "WF-004"
+   ],
+   "scope": "Compute ready/blocked stages from validated graph and immutable facts; pass/fail/skip/reject/changes_requested; loop visits/exhaustion; joins. Files: server/workflows/engine.ts, tests.",
+   "acceptance": "Pure (no model/tool), idempotent under duplicate completion, rejects unknown paths and unbounded loops; table/property tests for every outcome.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-006",
+   "phase": "Phase 1",
+   "title": "Stage executor registry and resource contracts",
+   "depends_on": [
+    "WF-005"
+   ],
+   "scope": "start/reconcile/cancel interface; register built-ins; validate per-executor config and capability intersection. Files: server/workflows/executors/, shared registry schema.",
+   "acceptance": "Unknown executor refuses activation; capability denied before session; controlled output schema; retryable vs permanent errors; fake executor tests.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-007",
+   "phase": "Phase 1",
+   "title": "Workflow scheduler, lease and recovery",
+   "depends_on": [
+    "WF-004",
+    "WF-005",
+    "WF-006"
+   ],
+   "scope": "LLM-free ready-queue polling; stage/run/global concurrency, budget/pacing, leases, cancellation; expired attempt reconciliation. Files: server/workflows/scheduler.ts, recovery.ts; narrow Swarm startup/timer integration.",
+   "acceptance": "No double start after restart; concurrent completion safe; obsolete attempt results rejected; paused/cancelled runs ignored; demo fake process recovery.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-008",
+   "phase": "Phase 1",
+   "title": "Existing agent session adapter",
+   "depends_on": [
+    "WF-006",
+    "WF-007"
+   ],
+   "scope": "Reuse Backend.startSession/SessionOptions for non-code stages with model/effort/JSON schema and scoped capabilities; per-attempt callbacks/logs. Files: server/workflows/executors/aiTask.ts; only narrow changes to agentRunner.ts/cliRunner.ts.",
+   "acceptance": "Structured output validated; bounded retry on malformed output; no implicit PR requirement; no unexpected repo shell access for planning.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-009",
+   "phase": "Phase 1",
+   "title": "Immutable artifact store and version lineage",
+   "depends_on": [
+    "WF-004",
+    "WF-006"
+   ],
+   "scope": "Artifact metadata, content hashes, Git-backed Markdown option, byte file store, version diff APIs, sensitivity/retention. Files: server/workflows/artifacts/.",
+   "acceptance": "Every revision is a new immutable version; approvals reference hash never 'latest'; tamper detected; binary supported; path traversal rejected.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-010",
+   "phase": "Phase 2 - Plan/spec/review/decision",
+   "title": "Plan and spec generation executors",
+   "depends_on": [
+    "WF-008",
+    "WF-009"
+   ],
+   "scope": "Plan schema/template, draft spec with stable REQ/NFR IDs and source refs; no issue creation. Files: executors/plan.ts, specWrite.ts, prompts/templates.",
+   "acceptance": "One test request yields plan+spec artifacts; no GitHub side effects; valid structured output; verified vs unknown claims distinguished; baseline metrics.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-011",
+   "phase": "Phase 2",
+   "title": "Independent spec review and bounded revision",
+   "depends_on": [
+    "WF-010"
+   ],
+   "scope": "Structured findings, revision delta and mapping, loop limit, fresh reviewer session. Files: specReview.ts, specRevise.ts, findings schemas.",
+   "acceptance": "v1 fails, v2 created, re-review passes; max visits escalates; no overwrites; wrong target hash rejected.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-012",
+   "phase": "Phase 2",
+   "title": "Deterministic decision and human approval stage",
+   "depends_on": [
+    "WF-005",
+    "WF-009",
+    "WF-010",
+    "WF-011"
+   ],
+   "scope": "Pure decision guard; approval request/decide/revoke APIs with target hash, version precondition, permission; local-only caveat. Files: policyDecision.ts, humanApproval.ts, API routes.",
+   "acceptance": "Pending gate consumes no tokens; stale/missing permission rejected; changes_requested routes to revision; approval survives restart; actor and digest audited.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-013",
+   "phase": "Phase 2",
+   "title": "Stage-level model configuration and cost telemetry",
+   "depends_on": [
+    "WF-008",
+    "WF-007"
+   ],
+   "scope": "Per-stage model/CLI/effort routing; usage ledger reported/estimated/unknown; pre-start budgets; provider quota reservations. Files: stage config, metrics.ts bridge, budget policy.",
+   "acceptance": "Stages may use different models subject to availability; budget pause prevents future starts; no fake exact token counts; legacy session stats preserved.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-014",
+   "phase": "Phase 3 - Bridge to GitHub development and merge",
+   "title": "Opt-in repository workflow and CubeFarm bridge",
+   "depends_on": [
+    "WF-012",
+    "WF-007"
+   ],
+   "scope": "Per-repo activation; WorkflowBridge to create/link issues and observe existing PR development; legacy floors unchanged; single PR owner. Files: server/workflows/adapters/cubefarm.ts; narrow swarm.ts/API/types changes.",
+   "acceptance": "Approved spec creates linked issues once; no issue without approval; legacy repo runs end-to-end; race-free PR ownership.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-015",
+   "phase": "Phase 3",
+   "title": "SHA-bound multi-review merge authorization",
+   "depends_on": [
+    "WF-014"
+   ],
+   "scope": "Merge gate over mandatory stage reviews, policy digest, exact head, required CI names; integrate without weakening legacy merge. Files: server/workflows/policy/merge.ts; existing mergeGate.ts, swarm.ts.",
+   "acceptance": "Head change invalidates approval; missing named check blocks; manual override explicit/audited; no head race; no-config path unchanged.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-016",
+   "phase": "Phase 3",
+   "title": "Specialized AI code reviewer executor",
+   "depends_on": [
+    "WF-008",
+    "WF-015"
+   ],
+   "scope": "code.review profiles (security, UX/UI, architecture, API compatibility); isolated session; structured SHA-bound reports; diff+evidence; optional Playwright. Files: codeReview.ts, prompt profiles, UI status.",
+   "acceptance": "Distinct verdicts and costs; reviewer cannot authorize merge; output bound to SHA; no mandatory PR mutation.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-017",
+   "phase": "Phase 3",
+   "title": "Deterministic GitHub checks stage",
+   "depends_on": [
+    "WF-015"
+   ],
+   "scope": "Explicit required check names; pending/failing/missing/success truth table; provider verification; bounded rerun; conditional wake. Files: githubChecks.ts, GitHub adapter.",
+   "acceptance": "No-check case blocks protected merge; red/pending blocks; success on another SHA rejected; transient API failures never pass.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-018",
+   "phase": "Phase 3",
+   "title": "Conditional stage execution",
+   "depends_on": [
+    "WF-003",
+    "WF-016"
+   ],
+   "scope": "Path/label/repo-kind/risk conditions on trusted facts; recorded skips; mandatory override for risk-critical stages. Files: compiler/evaluator/scheduler.",
+   "acceptance": "UI-only PR triggers UX; auth PR triggers security; docs-only skips optional but not protected security; unknown facts block protected stages.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-019",
+   "phase": "Phase 3",
+   "title": "Fix feedback and review revalidation",
+   "depends_on": [
+    "WF-015",
+    "WF-016",
+    "WF-017",
+    "WF-018"
+   ],
+   "scope": "Aggregate specialist findings into one fix task; rerun invalidated reviews on new commits; respect retry limits. Files: fix bridge, review aggregator.",
+   "acceptance": "Failed security stage requests fix; new SHA triggers security+QA rerun; old approvals cannot authorize merge; no infinite loop.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-020",
+   "phase": "Phase 4 - UI, release and hardening",
+   "title": "Workflow and artifact UI, first cut",
+   "depends_on": [
+    "WF-012",
+    "WF-014"
+   ],
+   "scope": "List/graph of active stages, per-repo config, stage costs, spec Markdown/diff, findings, pending approvals; 3D/Pocket stay functional. Files: client/src/ui panels, api.ts, store.ts, server/outbox.ts.",
+   "acceptance": "Mobile approval without Three.js; exact version, blocker and required action shown; terminal/agent UI intact; browser demo test.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-021",
+   "phase": "Phase 4",
+   "title": "API and audit hardening",
+   "depends_on": [
+    "WF-012",
+    "WF-015"
+   ],
+   "scope": "Zod validation, origin/CSRF protections where needed, local approval identity limits, audit logs, operation status, secret redaction. Files: server/index.ts, workflow API/auth modules.",
+   "acceptance": "Forbidden/stale actions rejected; logs redacted; no new network exposure; manual override traceable.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-022",
+   "phase": "Phase 4",
+   "title": "Migration, backup and documentation",
+   "depends_on": [
+    "WF-004",
+    "WF-014"
+   ],
+   "scope": "Storage schema version, old state compatibility, import of repo configs, restore tests, user docs/commands. Files: migration/config, docs/, CONTRIBUTING.md.",
+   "acceptance": "Old state.json loads; no new gates without opt-in; backup restores run and artifact digest; rollback guidance.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-023",
+   "phase": "Phase 4",
+   "title": "MVP integration release gate",
+   "depends_on": [
+    "WF-001..WF-022 (MVP subset)"
+   ],
+   "scope": "Full demo: request -> plan -> spec v1 review fail -> v2 approved -> issues -> PR -> QA/review/checks -> merge; negative tests.",
+   "acceptance": "All P0 cases in 10-TEST-AND-ACCEPTANCE pass; no real provider use in tests; supported-OS smoke build; docs and open risks.",
+   "effort": "MVP overall: 'several engineering weeks' for one experienced engineer (RFC, unvalidated)"
+  },
+  {
+   "id": "WF-024",
+   "phase": "Phase 5 - Multi-project orchestration",
+   "title": "Portfolio/initiative and cross-run dependency graph",
+   "depends_on": [
+    "WF-023"
+   ],
+   "scope": "Parent/child runs, shared approved spec, typed DependencyRef, verified cross-repo predicates, cycle detection, status UI.",
+   "acceptance": "Package release gates consumer; parent incomplete until children pass; source links alone do not block.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-025",
+   "phase": "Phase 5",
+   "title": "Package and GitOps adapters",
+   "depends_on": [
+    "WF-024"
+   ],
+   "scope": "Read-only package publish, image digest, GitOps reconciliation/health observations; optional environment-target authorization; external-event reconciliation.",
+   "acceptance": "Merged GitOps PR does not imply healthy deploy; consumer waits for published package; transient 404 stays pending.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-026",
+   "phase": "Phase 5",
+   "title": "Non-GitHub and physical project adapters",
+   "depends_on": [
+    "WF-024",
+    "WF-009"
+   ],
+   "scope": "Standalone Project without PersistedRepo; file/CAD/BOM artifacts; manual milestone/evidence; authorized design/procurement gates.",
+   "acceptance": "Non-GitHub workflow completes with zero GitHub API calls or PRs; purchase request never buys.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-027",
+   "phase": "Phase 5",
+   "title": "Parallel stage scheduling and join semantics",
+   "depends_on": [
+    "WF-023",
+    "WF-007"
+   ],
+   "scope": "Fork/join with cap; parallel reviews; branch cancellation; deterministic combined result; approval invalidation.",
+   "acceptance": "Security and UX run concurrently, merge waits for both; failure + new SHA revalidates others; no double lease.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-028",
+   "phase": "Phase 5",
+   "title": "External events/webhooks and durable inbox",
+   "depends_on": [
+    "WF-024"
+   ],
+   "scope": "Authenticated webhooks, signature verification, incoming idempotency, polling fallback, observability.",
+   "acceptance": "Duplicate/reordered events yield one transition; forged webhook rejected; backfill reconciles missed events.",
+   "effort": "unestimated"
+  },
+  {
+   "id": "WF-029",
+   "phase": "Phase 5",
+   "title": "Hosted auth/RBAC",
+   "depends_on": [
+    "core engine (WF-005..WF-007)"
+   ],
+   "scope": "Only if remote/multi-user: sessions, principals, project authorization, approver roles, audit, TLS, remote threat model.",
+   "acceptance": "No unapproved external write; users cannot approve other projects; privilege-escalation test suite.",
+   "effort": "independent major security work"
+  },
+  {
+   "id": "WF-030",
+   "phase": "Phase 5",
+   "title": "Visual workflow designer (optional)",
+   "depends_on": [
+    "WF-003",
+    "WF-005"
+   ],
+   "scope": "UI editor emitting the same validated declarative schema, diffs, simulations, approval activation.",
+   "acceptance": "Round-trip preserves canonical graph; invalid loops/permissions rejected server-side; full YAML view always available.",
+   "effort": "unestimated"
+  }
+ ],
+ "adrs": [
+  {
+   "id": "ADR-001",
+   "title": "Work item is the root, not GitHub issue",
+   "status": "recommended: accept",
+   "summary": "Introduce WorkItem + Project + WorkflowRun independent of issues/PRs; map issues/PRs as produced/linked resources. Rejected: fake GitHub issues for preliminary steps."
+  },
+  {
+   "id": "ADR-002",
+   "title": "Stage executor registry, not role enum explosion",
+   "status": "recommended: accept",
+   "summary": "Keep agents as pooled resources; extensible executor kinds with stage-level model/tool profiles instead of adding planner/writer/security roles to AgentTask. Reviewers get fresh contexts."
+  },
+  {
+   "id": "ADR-003",
+   "title": "Deterministic engine, AI as executor only",
+   "status": "recommended: accept",
+   "summary": "Stage graph and transitions are pure functions; AI emits structured artifacts/recommendations; server validates and acts. Rejected: asking the CEO what to do each step."
+  },
+  {
+   "id": "ADR-004",
+   "title": "Immutable artifact identity/versioning",
+   "status": "recommended: accept",
+   "summary": "Every plan/spec/review/BOM/PR approval references exact content hash/version; revision creates a new version and triggers invalidation."
+  },
+  {
+   "id": "ADR-005",
+   "title": "GitHub config trusted at protected revision only",
+   "status": "recommended: accept",
+   "summary": "Workflow activated from authorized protected commit/template; a PR cannot weaken policy by editing .cubefarm/workflow.yaml; runs pin the effective definition."
+  },
+  {
+   "id": "ADR-006",
+   "title": "Storage driver choice",
+   "status": "open (recommendation: embedded transactional store)",
+   "summary": "Define store API; evaluate SQLite-compatible driver (native vs WASM) via fresh install, package smoke, cross-OS CI, concurrent writes, crash recovery; PostgreSQL adapter later for hosted mode; no hard dependency before packaging test passes."
+  },
+  {
+   "id": "ADR-007",
+   "title": "Ownership of code/QA/merge",
+   "status": "open (critical)",
+   "summary": "Option A (MVP): wrap whole issue->QA->merge as one cubefarm.development stage. Option B: single authoritative PR controller exposing sub-stages and disabling legacy auto-merge for opted-in PRs. Needs integration spike; never two controllers merging one PR."
+  },
+  {
+   "id": "ADR-008",
+   "title": "Approval identity in local mode",
+   "status": "open (cannot overclaim)",
+   "summary": "MVP: approvals labeled local_operator, loopback only, no financial/production identity guarantees. Hosted: real auth, RBAC, session/CSRF, audit. Decide whether remote multi-user approval is MVP."
+  },
+  {
+   "id": "ADR-009",
+   "title": "Existing repo opt-in",
+   "status": "recommended: accept",
+   "summary": "No workflow config/activation means exact legacy behavior; opted-in repos use new gates; migrating an in-flight PR requires revalidation; two flows coexist with an explicit ownership field."
+  },
+  {
+   "id": "ADR-010",
+   "title": "Loop semantics",
+   "status": "recommended: bounded cycles only",
+   "summary": "Only review<->revise style cycles with maxVisits and exhaustion path; fix cycles bounded; loops modeled as compiler-validated SCCs."
+  },
+  {
+   "id": "ADR-011",
+   "title": "Mandatory check behavior",
+   "status": "recommended: fail closed for new protected workflows",
+   "summary": "Each named required check verified on current commit; checks='none' does not satisfy; legacy behavior changes only as a separate deliberate decision."
+  },
+  {
+   "id": "ADR-012",
+   "title": "Human versus AI decision",
+   "status": "recommended: separate",
+   "summary": "policy.decision deterministic, ai.recommendation advisory, human.approval grants authority."
+  },
+  {
+   "id": "ADR-013",
+   "title": "Workflow schema source and inheritance",
+   "status": "open",
+   "summary": "Default .cubefarm/workflow.yaml plus built-in templates with explicit digest activation; later org baseline -> project template -> repo extension that can only add gates. Recommended: no complex inheritance in MVP."
+  },
+  {
+   "id": "ADR-014",
+   "title": "Specialized reviewer reuse/caching",
+   "status": "open with conservative default",
+   "summary": "Fresh context per reviewer, SHA-bound verdicts, rerun all mandatory reviewers on head change; cache only on full digest match and explicit policy."
+  },
+  {
+   "id": "ADR-015",
+   "title": "Non-GitHub projects",
+   "status": "recommended: core domain now, adapters later",
+   "summary": "Design Project with optional GitHub locator in phase 0 even though physical workflows ship in P2; avoid fake repos/PRs."
+  },
+  {
+   "id": "ADR-016",
+   "title": "Workflow event mechanism",
+   "status": "recommended: local durable outbox first",
+   "summary": "In-process event loop backed by transactional outbox and external operation ledger; no Kafka; at-least-once; scale-out later needs leases/fencing and DB adapter."
+  }
+ ],
+ "open_questions": [
+  "Q1 Main platform goal: local single-user AI factory, shared team service, or eventually hosted multi-tenant platform (drives auth and store)?",
+  "Q2 Workflow config governance: owner activates file from protected Git branch, or UI-managed workflow template?",
+  "Q3 Approvals: can the local single-user manager attest, or must real named users sign? Who can waive security/deployment gates?",
+  "Q4 Existing auto-merge: should opted-in workflow PRs always be controlled by the new merge gate with old auto-merge disabled?",
+  "Q5 Spec repository strategy: approved Markdown spec PR merged before coding, or immutable internal artifact plus optional Git commit?",
+  "Q6 Project composition: may multiple GitHub repos map to one project/work item (recommended yes)?",
+  "Q7 Issue generation: exactly when may planning create GitHub issues (recommended only after approval in spec-first workflows)?",
+  "Q8 Default reviewer policies: which paths always require security/UX review; per project or protected org baseline?",
+  "Q9 Model availability: Claude/Codex/OpenCode/local models, subscription vs API; which stages must be provider-neutral?",
+  "Q10 Budgets: per task/project/day/provider limits; are estimated costs sufficient to pause?",
+  "Q11 Physical workflows: which artifact sources and third-party systems first (CAD, BOM, supplier quotes, docs)?",
+  "Q12 GitOps: GitHub Actions only, or direct Argo CD/Flux/Kubernetes read-only health adapters?",
+  "Q13 Persistence: embedded SQLite packaging constraints; future PostgreSQL/remote workers?",
+  "Q14 Concurrency: run stage reviewers concurrently by default, or only after serial MVP stability?",
+  "Q15 Migration: activate new workflows mid-PR, or only for newly created work items?",
+  "[added from verification] Target repo: the RFC targets leonvanzyl/cubefarm, but this checkout's origin is kingpeti/VisualFactory with no upstream remote. Do PRs go to the fork only, and how is upstream churn merged in?",
+  "[added from verification] Enforcement policy conflict: repo CLAUDE.md forbids hooks/permission rules/sandboxes that refuse tool calls, while the RFC wants reviewers prevented from mutating code via execution policy. Which wins for workflow stages?",
+  "[added from verification] Should the existing team-change approval flow (HireRequestView, /api/requests/:id/approve, PocketApprovals) be generalized into human.approval rather than building a parallel one?",
+  "[added from verification] Should legacy loopback REST/WS get Origin/CSRF checks before any approval endpoint ships (see gaps)?"
+ ],
+ "baseline_claims": [
+  {
+   "claim": "Verified baseline: commit 157efde6532a4595fde4bd0723088d26d2e0d58a, package 0.3.20, Node >=22, Express 5, Zod 4, Vitest.",
+   "verdict": "confirmed",
+   "evidence": "git rev-parse HEAD = 157efde6532a4595fde4bd0723088d26d2e0d58a; package.json:3 (0.3.20), :33-34 (node >=22), dependencies express ^5.2.1, zod ^4.0.0; package.json scripts test: vitest run."
+  },
+  {
+   "claim": "server/swarm.ts is ~5,535 lines.",
+   "verdict": "confirmed",
+   "evidence": "wc -l server/swarm.ts = 5534."
+  },
+  {
+   "claim": "As-is #1: one floor per GitHub repo; PersistedRepo holds id, repo identity, autoAssign, autoMerge, browserTesting, links, mission, summary, qaBrief, preview config (swarm.ts ~109-128, types.ts ~60-100).",
+   "verdict": "confirmed",
+   "evidence": "server/swarm.ts:109-127 (PersistedRepo incl. localPath, color, addedAt too); shared/types.ts:60-87 (RepoView)."
+  },
+  {
+   "claim": "As-is #2: AgentTask is issue|qa|fix, AgentRole is agent|ceo (types.ts ~153-177); CLI/model/effort chosen per agent, not per stage.",
+   "verdict": "confirmed",
+   "evidence": "shared/types.ts:148 (AgentRole), :169 (AgentTask), :178 (AgentCli); server/swarm.ts:141-143 (PersistedAgent model/effort/cli); swarm.ts:2682 (CEO always 'claude'). Line range drifts a few lines (AgentRole at 148 is outside the cited 153-181 anchor)."
+  },
+  {
+   "claim": "As-is #3: planFloor (~4442) queues a CEO plan job; ceoJobPrompt (~312-348) files a limited number of issues with acceptance criteria; fileIssue (~5485) only for requested work with IssueCap; no durable approved spec artifact.",
+   "verdict": "confirmed",
+   "evidence": "server/swarm.ts:4442-4450 (planFloor enqueues {kind:'plan'}); server/ceo.ts:323-335 (plan job text: 'File the issues'), ceo.ts:267 and :133 (acceptance criteria), ceo.ts:28 (askedFor), ceo.ts:373-385 (IssueCap); swarm.ts:319 (MAX_ISSUES_PER_JOB = 12); swarm.ts:5485-5495 (fileIssue: NOT_ASKED check, cap check, direct backend.createIssue, no idempotency marker)."
+  },
+  {
+   "claim": "As-is #4: runTask (~2885), onIssueFinished (~3108), startPipelineWork (~3826) dispatches QA then fixes, startIssueWork (~3865) auto-assigned issues, schedule (~4026) runs CEO work then pipeline before new issues.",
+   "verdict": "confirmed",
+   "evidence": "server/swarm.ts:2885-2905 (branch, live issue check, prepare desk); :3108-3143 (PR found by regex on session text or prForBranch, then queueQa); :3843-3857 (QA loop before fixes); :3865-3873 (autoAssign + mayStart('issue')); :4033-4042 (maybeHeartbeat, startCeoWork, then startPipelineWork before startIssueWork)."
+  },
+  {
+   "claim": "As-is #5: one QaRecord per PR with status, round, passedSha, testedSha, qaAgentId, fix retries (~165); QA_SCHEMA (~406) has one final pass|fail; runQa (~3264), onQaFinished (~3372) transition to passed/failed/needs-human.",
+   "verdict": "confirmed",
+   "evidence": "server/swarm.ts:165-186 (QaRecord: testedSha, passedSha, mergeFixes, retests, triages...); :406-411 (verdict enum ['pass','fail']); :3264; :3372-3463 (passedSha = pass ? testedSha : null at :3441; needs-human via stuck() :3452). Note: in the terminal runtime the schema is only requested in the prompt as a JSON block (server/cliRunner.ts:829-830), not SDK-enforced."
+  },
+  {
+   "claim": "As-is #6: mergeGate decides from QA-pass SHA, head SHA, check rollup, mergeability, retry; swarm ~1559/1580 acts; checks 'none' passes; branch protection needed for required checks.",
+   "verdict": "confirmed",
+   "evidence": "server/mergeGate.ts:43-74 (no branch for checks==='none', falls through to {do:'merge'} at :73); server/mergeGate.test.ts:32 asserts checks 'none' -> merge; server/swarm.ts:1559 (advanceMerges), :1587-1633 (advanceMerge). Omitted by RFC: auto-merge already passes passedSha as --match-head-commit (swarm.ts:1633, server/github.ts:206-208); mergeGate.ts:47 adopts the current head when passedSha is null (legacy records); manual merge has no QA gate and no head match (server/index.ts:161, swarm.ts:1921-1924)."
+  },
+  {
+   "claim": "As-is #7: linkedRepos()/linkedDirs() (~2667) expose related repos as read-only references in worker prompts; not cross-repo transactional workflows.",
+   "verdict": "partially",
+   "evidence": "server/swarm.ts:2671-2673, :2747-2749, :2992 (passed as additionalDirectories); server/clis.ts:262 (--add-dir); 'read-only' is only prompt text (server/prompts.ts:64, agentRunner.ts:23 comment). The directory is backend.mainDir, which is the manager's own project folder when the linked floor has localPath (server/workspace.ts:25). Not orchestration: correct; read-only: advisory only."
+  },
+  {
+   "claim": "As-is #8: issue dependencies are local; shared/issues.ts parses 'Depends on #N'/'Blocked by #N' against a Set<number> of open issues; ceo.ts planDependencies rejects cycles and chains >2.",
+   "verdict": "confirmed",
+   "evidence": "shared/issues.ts:4-10 (blockers(body, open: Set<number>)); server/ceo.ts:419-437 (cycle error at :435, depth > 2 error at :437)."
+  },
+  {
+   "claim": "As-is #9: connectFolder (~1484) checks .github, otherwise requires the folder to be published; non-GitHub projects not native.",
+   "verdict": "partially",
+   "evidence": "server/swarm.ts:1480-1486 rejects when f.github is null; f.github is the GitHub origin remote parsed from git config (server/workspace.ts:203-219 githubFromConfig), not a .github directory. Conclusion (GitHub required for a floor) is correct; mechanism description is wrong."
+  },
+  {
+   "claim": "As-is #10: state in ~/.cubefarm/state.json or demo-state.json via config.ts; JSON written by temp file + rename; restart recovery in reconcile.ts, qaOrphans.ts, terminal keeper; not a transactional DB.",
+   "verdict": "confirmed",
+   "evidence": "server/config.ts:15 (HOME_DIR), :48 (state.json / demo-state.json / demo-FxA-state.json for big demo); server/swarm.ts:1298-1300 (.tmp + fs.rename); server/reconcile.ts:37-48; server/qaOrphans.ts:25-31. RFC omits server/restartRecovery.ts (referenced at reconcile.ts:24-27), which holds the reattach/resume I/O."
+  },
+  {
+   "claim": "As-is #11: backend.startSession abstracts agentRunner (SDK) and cliRunner (CLIs); SessionOptions has prompt, system append, model, effort, optional JSON schema, cwd, browser tooling, resume ID.",
+   "verdict": "confirmed",
+   "evidence": "server/backend.ts:78 and :195 (opts.terminal ? startCliSession : startSession); server/agentRunner.ts:16-49 (cwd, prompt, systemAppend, model, effort, browserTesting, additionalDirectories, outputSchema, resumeSessionId, keepAlive, box...)."
+  },
+  {
+   "claim": "As-is #12: metrics.ts stores session-reported USD up to seven days; cliRunner reads CLI-reported costs; no uniform per-stage token ledger; pacing limits new issue starts on Claude usage warnings while QA/CEO/fixes continue; global session limit configurable.",
+   "verdict": "confirmed",
+   "evidence": "server/metrics.ts:11 (KEEP_MS 7 days), :23 (CostEntry usd only); server/agentRunner.ts:57-62 (SessionResult: costUsd, turns; no token fields), :482 (total_cost_usd); server/cliRunner.ts:625-627 (cost read from Claude status-line payload only); server/pacing.ts:24-28 (only 'issue' paced); shared/types.ts:346 (sessionLimit); server/swarm.ts:1327-1330 (slotsFull). RFC omits server/ledger.ts (idempotent gamification ledger with session costUsd/turns, ledger.ts:80)."
+  },
+  {
+   "claim": "As-is #13: index.ts exposes /api/repos/:repo/plan, /pulls/:n/qa, /merge, agent actions, settings, WebSockets; ManagerConsole edits qaBrief per repo; no workflow editor or workflow-run APIs.",
+   "verdict": "confirmed",
+   "evidence": "server/index.ts:119 (plan), :161 (merge), :163 (qa), :180-187 (agents), :196 (settings), :337-351 (/ws, /ws/term); client/src/ui/ManagerConsole.tsx (4 qaBrief references); grep for workflow/yaml in server/shared/client source finds no workflow engine; no YAML dependency in package.json."
+  },
+  {
+   "claim": "As-is #14: config.ts defaults host to 127.0.0.1 and warns that binding publicly has no sign-in; agents unsandboxed; CLAUDE.md puts behavioral rules in instructions, not enforcement; secure approval authorization is only proposed.",
+   "verdict": "confirmed",
+   "evidence": "server/config.ts:7-9 (HOST default 127.0.0.1, comment 'with no sign-in'); server/index.ts:360-363 (runtime warning); server/cliRunner.ts:188-189 (PreToolUse ALLOW for every call); server/clis.ts:284 (Codex --dangerously-bypass-approvals-and-sandbox); CLAUDE.md SAFETY bullet on prompt-only rules. Not mentioned by RFC: no Origin/CSRF check on REST or WS upgrade (server/index.ts:41-61, :346-351)."
+  },
+  {
+   "claim": "As-is #15: package.json offers typecheck, test, build, test:e2e; CI typechecks, tests, builds, smoke-tests; E2E not run in CI.",
+   "verdict": "confirmed",
+   "evidence": "package.json scripts (typecheck, test, build, test:e2e); .github/workflows/ci.yml:45 ('No browser tests here'), :64-69 (npm ci, typecheck, test, build, smoke-package)."
+  },
+  {
+   "claim": "Evidence anchors table: swarm.ts#L109-128, #L1527-1550, #L3826-3873, #L3372-3464, #L2667-2759; ceo.ts#L250-350; agentRunner.ts#L16-77; prompts.ts#L99-141; types.ts#L153-181.",
+   "verdict": "partially",
+   "evidence": "Exact or near-exact: swarm.ts:109-127, :1527-1550 (updateRepo), :3826-3873, :3372-3464, :2671-2757; ceo.ts:291-349 within 250-350; agentRunner.ts:16-84 (callbacks run past 77); prompts.ts:99-126 qaSystemPrompt + :128-138 fix helpers. Drift: AgentRole is at shared/types.ts:148, outside L153-181."
+  },
+  {
+   "claim": "Critical gap: no repository-defined stage graph or YAML parser.",
+   "verdict": "confirmed",
+   "evidence": "No yaml/workflow modules under server/, shared/, client/src (grep); package.json dependencies contain no YAML library."
+  },
+  {
+   "claim": "Critical gap: no plan/spec/revision/review artifacts with immutable versions and recorded approvals.",
+   "verdict": "confirmed",
+   "evidence": "CEO plan job files issues directly (server/ceo.ts:323-335); only artifacts kept are QA screenshots (server/swarm.ts:3407-3413) and QA comments on the PR (:3424)."
+  },
+  {
+   "claim": "Critical gap: no stage-local status/retry/assignment model independent of issue/PR.",
+   "verdict": "confirmed",
+   "evidence": "shared/types.ts:169 (AgentTask issue|qa|fix); server/swarm.ts:165-186 (QaRecord keyed by repoId+prNumber)."
+  },
+  {
+   "claim": "Critical gap: no separate enforced policy for specialist AI reviewers or human approvers.",
+   "verdict": "partially",
+   "evidence": "No specialist reviewers (single QA_SCHEMA, swarm.ts:406). But a human-approval primitive already exists for team changes: shared/types.ts:547-566 (HireRequestView with decidedBy 'manager'|'auto'), server/swarm.ts:5111 (decide), server/index.ts:290-303 (/api/requests/:id/approve|reject), client/src/pocket/PocketApprovals.tsx (mobile approvals tab incl. stuck/passed PRs). Not artifact- or hash-bound, no principal."
+  },
+  {
+   "claim": "Critical gap: no conditional/parallel reviewer stages.",
+   "verdict": "confirmed",
+   "evidence": "One QA round per PR via runQa/onQaFinished (server/swarm.ts:3264, :3372); no condition evaluation anywhere."
+  },
+  {
+   "claim": "Critical gap: no one-PR/multiple-stage SHA-bound approval contract.",
+   "verdict": "partially",
+   "evidence": "Single-stage SHA binding exists: passedSha = testedSha (server/swarm.ts:3441), head mismatch requeues (server/mergeGate.ts:48), merge with --match-head-commit (swarm.ts:1633, github.ts:208). Multi-stage contract absent."
+  },
+  {
+   "claim": "Critical gap: no cross-repo package/release/deployment dependency graph.",
+   "verdict": "confirmed",
+   "evidence": "shared/issues.ts:4-10 only resolves local open issue numbers; repo.links are context only (server/swarm.ts:2671)."
+  },
+  {
+   "claim": "Critical gap: no native non-GitHub work item and physical project lifecycle.",
+   "verdict": "confirmed",
+   "evidence": "server/swarm.ts:1484 (connectFolder requires GitHub origin); all issue/PR ops go through Backend GitHub methods (server/backend.ts:26-48)."
+  },
+  {
+   "claim": "Critical gap: no full per-stage token ledger and budget gating.",
+   "verdict": "confirmed",
+   "evidence": "server/agentRunner.ts:57-62 (no token fields); server/pacing.ts:24-28 reacts only to Claude usage warnings/limits; no USD budget checks found."
+  },
+  {
+   "claim": "Critical gap: no transactional recovery of arbitrary external side effects.",
+   "verdict": "confirmed",
+   "evidence": "fileIssue calls createIssue with no marker or intent record (server/swarm.ts:5491-5492); state is a whole-file JSON rewrite (swarm.ts:1298-1300). Partial mitigations exist: restart checks GitHub state (server/reconcile.ts:10-15) and merges are head-matched (swarm.ts:1633)."
+  },
+  {
+   "claim": "Critical gap: no general user authentication/RBAC for approvals and external exposure.",
+   "verdict": "confirmed",
+   "evidence": "No auth middleware in server/index.ts (routes at :61-312 use only route()); config.ts:7-9 documents no sign-in when bound beyond loopback; /api/hooks and /api/mcp rely on per-session path tokens only (index.ts:38-40)."
+  },
+  {
+   "claim": "Boundary: shared/types.ts holds existing task and QA view types; add workflow types in separate modules.",
+   "verdict": "confirmed",
+   "evidence": "shared/types.ts:169 (AgentTask), :308-322 (QaStatus, QaView), :637 (ServerEvent union)."
+  },
+  {
+   "claim": "Boundary: server/swarm.ts owns scheduler, CEO, issue/QA/fix/merge integration; use a narrow WorkflowBridge seam.",
+   "verdict": "confirmed",
+   "evidence": "server/swarm.ts:4026 (schedule), :4442 (planFloor), :2885 (runTask), :3264 (runQa), :1587 (advanceMerge). WorkflowBridge itself does not exist (proposal)."
+  },
+  {
+   "claim": "Boundary: agentRunner.ts + cliRunner.ts execute model sessions; do not duplicate runner logic.",
+   "verdict": "confirmed",
+   "evidence": "server/backend.ts:195 dispatches to cliRunner.startCliSession or agentRunner.startSession."
+  },
+  {
+   "claim": "Boundary: server/ceo.ts existing planning only emits GitHub issues.",
+   "verdict": "partially",
+   "evidence": "Planning output is issues (ceo.ts:323-335), but the file_issue tool is only declared in ceo.ts (:128-133); its implementation is swarm.ts:5485. CEO tools also set dependencies, close issues, scale teams, set floor profile/QA brief and triage PRs (ceo.ts:305, :314-315)."
+  },
+  {
+   "claim": "Boundary: server/mergeGate.ts must incorporate stage approvals only after QA and deterministic checks on exact commit.",
+   "verdict": "partially",
+   "evidence": "mergeGate.ts is a pure decision over MergeRecord (mergeGate.ts:13-21, :43); all I/O and the merge call live in swarm.ts:1587-1640; the manual merge route bypasses mergeGate entirely (index.ts:161, swarm.ts:1921-1924). Extending mergeGate alone would not cover manual merges."
+  },
+  {
+   "claim": "Boundary: server/reconcile.ts, server/qaOrphans.ts model restart recovery.",
+   "verdict": "partially",
+   "evidence": "server/reconcile.ts:37-48 (issue/qa/fix only), server/qaOrphans.ts:25-31; the I/O side is server/restartRecovery.ts (reconcile.ts:24-27), which the RFC does not list."
+  },
+  {
+   "claim": "Boundary: server/index.ts, client/src/api.ts, client/src/store.ts for API/UI integration with schema validation and event contracts.",
+   "verdict": "confirmed",
+   "evidence": "Files exist; client/src/store.ts:285-550 switch on ev.type has no default, so unknown additive events are ignored safely; server/index.ts uses zod only on a few routes (:210, :212) while CLAUDE.md says request bodies are validated by hand."
+  }
+ ],
+ "internal_inconsistencies": [
+  "Stage status vocabularies disagree: section 03 StageRun = waiting/ready/running/passed/failed/skipped/blocked/waiting_approval/cancelled/stale; section 06 StageRunStatus = not_ready/ready/reserved/running/waiting_event/waiting_approval/passed/changes_requested/failed/blocked/skipped/cancelled/stale.",
+  "Outcome vocabularies disagree: section 03 StageOutcome TS union lacks failed/cancelled/approved, which section 04 lists as recommended output kinds; section 05 review outcome uses 'pass' while elsewhere it is 'passed'; human.approval states add expired/revoked not present in StageOutcome.",
+  "Executor names drift: README lists ai.task/review/decision/approval/cubefarm.development; section 03 lists artifact.review/artifact.revise/policy.decision/human.approval/github.issues.create/cubefarm.development/github.checks.await/deployment.verify/external.manual; the section 04 YAML additionally uses artifact.write, code.review, cubefarm.fix, cubefarm.qa, policy.merge_gate, workflow.end; section 05 adds github.merge, ai.recommendation, artifact.import, external.event, purchase.request.",
+  "The section 04 sample YAML would fail its own validation rules: 'needs' mixes artifact names (plan, spec, github_pr) with stage prerequisites (the field table itself flags the overload); gate.needs requires security_report although security_review can be skipped (rule 6 'missing output producers'); qa changes_requested routes to fix_pr whose only exit returns to security_review, not qa; human_triage 'approved' always routes to spec_revise even when entered from develop or gate (acknowledged in prose).",
+  "Requiredness placement differs: field table puts requiredness under stage 'policy', the YAML puts 'required: true' inside 'with'.",
+  "ADR-007 leaves open whether development/QA/merge is one atomic stage (Option A, MVP) or split sub-stages, yet the P0 slice, E2E-A step 8 and P0 tests T-060/T-061/T-070 require separate security and QA verdicts on the same PR before merge, which only Option B supports.",
+  "Priority mismatch: security/UX specialist review stages and stage budgets are P1 in the release slices, but T-060 (security+QA on SHA) and T-048 (budget exhausted pauses attempts) are listed as P0 unit tests, and WF-015/WF-016/WF-019 sit on the MVP path to WF-023.",
+  "Dependency map in 09 omits WF-007, WF-013, WF-016..WF-019, WF-021, WF-022 and several edges stated in ticket text (WF-008 needs WF-007; WF-009 needs WF-004; WF-012 needs WF-009..011; WF-014 needs WF-007), so the graph and the ticket dependencies disagree.",
+  "WF-002 entity list differs between section 09 (includes WorkflowRun, Dependency) and the 12-AGENT-START-PROMPT (adds StageAttempt, DependencyRef, omits WorkflowRun).",
+  "Section 06 SQL sketch is missing entities defined in section 03 (BudgetLedger, Decision, Initiative/Portfolio join) and the approval expiry field that section 05 requires (receipt has expiry; states include expired), while approvals.approver_principal is NOT NULL despite local_operator mode.",
+  "Finding identity conflict: section 05 says Finding.id is stable across re-reviews of the same issue, but section 06 makes findings.id a primary key per row with review_artifact_id, so a persisting finding cannot keep one id across reviews.",
+  "workflow_definitions.sha256 is UNIQUE while also carrying project_id, so the same definition activated in two projects collides.",
+  "Bundle references are missing: AGENTS.md and README point to separate files 01-SOURCE-BASELINE.md ... 11-ADRS..., examples/*.yaml and prompts/*.md 'in the ZIP', but the provided folder only contains the combined RFC, AGENTS.md and 12-AGENT-START-PROMPT.md; E2E-A depends on the absent examples/frontend.yaml.",
+  "RFC mandates 'All mutating endpoints must validate requests with Zod' while the repo convention (CLAUDE.md) is 'Validate request bodies by hand at the route or in the swarm' (index.ts does use zod on a few routes, :210, :212). Conflict should be surfaced, not averaged.",
+  "RFC wants reviewer code mutation prevented 'through execution policy' and runners receiving only the intersection of capabilities, while repo CLAUDE.md explicitly says not to add hooks, permission rules or sandboxes that refuse tool calls, and cliRunner.ts:188-189 approves every tool call. The RFC notes prompt-only enforcement but does not flag this as a direct conflict requiring an owner decision.",
+  "Baseline claim 9 describes connectFolder as checking '.github'; code checks the GitHub origin remote (workspace.ts:203-219).",
+  "Proposed merge requirements present a head-match precondition as new (03 policy boundary, T-067) while the existing auto-merge already merges with --match-head-commit (swarm.ts:1633, github.ts:208); the real legacy gap is the manual merge route (swarm.ts:1921-1924), which the baseline does not describe.",
+  "Target identity: RFC and PR template name leonvanzyl/cubefarm as the repo, but this checkout's origin is kingpeti/VisualFactory (git remote -v) with no upstream remote configured."
+ ],
+ "gaps_in_rfc": [
+  "Reuse of existing human-approval machinery is not considered: HireRequestView + decide() + /api/requests/:id/approve|reject + client/src/pocket/PocketApprovals.tsx already implement pending decisions, decidedBy, phone cards and a mobile approvals tab (shared/types.ts:547-566, server/swarm.ts:5100-5169, server/index.ts:290-303). human.approval could extend this rather than start parallel.",
+  "Existing event log/audit primitives are ignored: server/journal.ts records every Swarm.broadcast event into day/keyframe files with secret scrubbing (journal.ts:76 envSecrets) and retention, and server/ledger.ts is an idempotent event fold with seen-keys (ledger.ts:1-4, :50-51). The RFC proposes workflow_events/outbox without reconciling with them, and does not address that new workflow events (spec content, findings) would be journaled by default.",
+  "Loopback is treated as a trust boundary, but the existing server has no Origin/CSRF checks on REST or WebSocket upgrades (server/index.ts:41-61, :346-351), /ws/term forwards keystrokes to unsandboxed CLIs (server/terminal.ts:160-169), and the merge route works with an empty body (index.ts:161). A browser-originated cross-site request to 127.0.0.1 is a plausible attack path (needs a test); local_operator approvals would inherit it. The RFC only asks for CSRF 'for cookie-authenticated use'.",
+  "Existing beyond-loopback modes are not addressed in ADR-008: --host/SWARM_HOST LAN binding (#305, config.ts:7-9) and the preview gateway serving previews through the office address (#310, server/previewGateway.ts). 'Loopback only for approvals' needs a concrete rule for these modes.",
+  "Linked-repo capability risk: 'read-only' linked dirs are passed to agents as writable --add-dir paths and may be the manager's own project folder (server/workspace.ts:25, server/swarm.ts:2992). The capability model (read_linked_repo) does not cover this.",
+  "No per-CLI capability matrix for stage routing: Claude SDK enforces outputSchema while terminal CLIs only get a prompt-requested JSON block (server/cliRunner.ts:829-830); cost comes only from Claude's status line (cliRunner.ts:625-627), so Codex/OpenCode cost/tokens are effectively absent; resume, hooks and screenshots differ per CLI. Needed before 'stage-level model routing'.",
+  "Non-coding stages (plan, spec, review) are routed through startSession, which needs a cwd/desk and a full coding-agent CLI; no option for direct model API calls or the newly added local models (#311, Codex/OpenCode ollama/lmstudio/llamacpp/omlx) as cheap reviewers.",
+  "Visual factory UX is underspecified: no design for how workflow runs, stages, artifacts and approvals appear in the 3D office (rooms, whiteboard, Kanban, characters' errands), no spec Markdown viewer/diff/inline-comment design that maps human comments to findings, and no use of the time-lapse replay for workflow audit.",
+  "Existing PR theatre previews (server/prTheatre.ts, previews.ts) and QA screenshot store (server/qaShots.ts) are not wired into UX review stages or human approval of UI changes; no visual regression/screenshot diff evidence model.",
+  "Approval requests are not mapped to the existing notifier (Web Push, chat webhooks, voice: server/notifier.ts, voice.ts); approval latency KPIs depend on this.",
+  "Forge and tracker breadth: everything is GitHub via gh (server/github.ts); no GitLab/Bitbucket/Azure DevOps adapters and no Jira/Linear as work-item sources or issue sinks, which an all-in-one factory likely needs.",
+  "Fork maintenance strategy is absent: the user's repo is a fork with no upstream remote; RFC targets upstream and gives no policy for merging upstream churn into a fork that extends a 5,534-line swarm.ts conflict hotspot.",
+  "Reproducibility of stage runs: agents run with the manager's own skills, plugins, MCP servers and settings (ManagerConsole.tsx:744, clis.ts:254-256), none of which are captured in the definition/prompt digest; a pinned workflow is not a pinned execution environment.",
+  "ADR-006 storage options omit Node's built-in node:sqlite (no npm native module) and do not weigh JSON-only workflow configs to avoid adding a YAML parser dependency.",
+  "Demo parity and scale budgets from repo conventions are only partly reflected: CLAUDE.md requires a demo.ts fake for every new Backend method and server/scale.test.ts websocket budgets for a big company; the RFC does not set payload/patch budgets for workflow events through server/outbox.ts.",
+  "Agent/reviewer quality evaluation: KPIs include reviewer false-positive rate, but there is no mechanism to label findings as true/false positives, no golden eval sets, and no prompt-version A/B comparison.",
+  "Knowledge/memory across runs (codebase index, reusable verified context summaries with staleness checks) is mentioned as a cost lever but not designed.",
+  "No mapping to the user's chosen planning toolchain (AI Factory / .ai-factory artifacts such as DESCRIPTION.md, ARCHITECTURE.md, plans); the RFC's backlog/ADR format would need translating."
+ ]
+}

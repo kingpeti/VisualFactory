@@ -5,6 +5,7 @@ A cartoon first-person 3D office (React Three Fiber) over a Node orchestrator th
 roles: any free agent builds, tests or fixes) and each works on a machine of its own (docs/agents.md).
 This is the app the company runs on: a live office is running from this repo right now. README.md is the quick start; docs/how-it-works.md and CONTRIBUTING.md have the details.
 It ships on npm as `cubefarm` (`npx cubefarm`); it used to be called Office Swarm.
+This checkout is VisualFactory, a fork: docs/fork.md has its decisions, import ledger and upstream sync procedure.
 
 ## SAFETY (read first)
 
@@ -30,9 +31,11 @@ It ships on npm as `cubefarm` (`npx cubefarm`); it used to be called Office Swar
   updates its own folder (git fetch + merge, npm install, build) when the office or you ask for it (`u`). Run it
   only in a throwaway clone outside the live office, with `--demo` and your `SWARM_HOME`, `SWARM_PORT` and
   `SWARM_CLIENT_PORT`.
-- Agents are ordinary coding-agent CLI sessions on the manager's own setup, unsandboxed, by the manager's choice. The
-  office's workflow rules (no pushes to the default branch, no merging, QA leaves GitHub alone) live in their prompts
-  and instructions, not in enforcement: don't add hooks, permission rules or sandboxes that refuse tool calls.
+- Agents are ordinary coding-agent CLI sessions on the manager's own setup, today unsandboxed, and the office's
+  workflow rules (no pushes to the default branch, no merging, QA leaves GitHub alone) live in their prompts.
+  VisualFactory decision (2026-11-14): these rules move into enforcement. Hooks, per-CLI permission rules and sandboxes
+  that refuse tool calls are wanted (e.g. read-only reviewers, no pushes to the default branch); add them per CLI where
+  the CLI supports it, with a demo fake and tests (see `.ai-factory/ARCHITECTURE.md`, Decisions).
   `ANTHROPIC_*` / `CLAUDE_*` are stripped from agent and preview env.
 
 ## Scripts
@@ -111,6 +114,8 @@ Server (`server/`, Node + Express 5 + ws, run by tsx in development; esbuild bun
 - `qaShots.ts`: QA's screenshots of each PR's latest round, kept for the app viewer's QA panel.
 - `previewRunner.ts`: checks out, installs and runs a floor's app in its preview worktree; kills the process tree.
 - `httpError.ts`: `HttpError(status, message)`.
+- `log.ts`: `debugLog(scope, message, data?)`, verbose logs printed only when `SWARM_DEBUG` turns the scope on (`1` or
+  `*` for all, or a list like `merge,holds`).
 - `officeUpdate.ts`: the office's self-update: the drain decision, the launcher contract (IPC, `last-update.json`).
 - `pacing.ts`: pacing new work after Claude's usage warnings: the start/skip decision and the usage state.
 - `presence.ts`: shared presence: relays tabs' poses, emotes and pings on `/ws` to their floor (pure interest and rate
@@ -196,7 +201,8 @@ Client (`client/`, Vite root; React 19, R3F, drei, zustand):
   (`server/outbox.ts`). Add new state to `shared/types.ts`, the snapshot and an event, and handle it in `store.ts`'s
   `apply`. REST is for commands, not for polling state. A big company must fit `server/scale.test.ts`'s budgets.
 - REST errors: throw `HttpError(4xx, message)`; the handler in `index.ts` returns `{ error }` JSON, anything else
-  is a logged 500. Validate request bodies by hand at the route or in the swarm.
+  is a logged 500. Validate request bodies with zod schemas at the route (VisualFactory decision: new and touched routes
+  use zod; the remaining hand-validated routes migrate over time).
 - CEO tools: zod input schemas, errors worded so the CEO can act on them, small outputs.
 - Windows first (the office runs on Windows):
   - build paths with `path.join` / `path.resolve`; paths may contain spaces, so pass args as arrays (`execFile`),
