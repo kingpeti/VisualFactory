@@ -13,6 +13,14 @@ The owner's decisions (OpenCode 2.x only, 2D dashboard next to the 3D office, lo
 enforced agent rules, the development loop as one workflow stage) are in `.ai-factory/ARCHITECTURE.md`, Decisions.
 They override upstream conventions where the two differ.
 
+## Tracking
+
+Every task and feature is a GitHub issue on the [VisualFactory board](https://github.com/users/kingpeti/projects/4),
+with milestones M0-M7 and `Depends on #N` lines that a cubefarm office follows. Every issue starts with
+`swarm:skip`, so an office connected to this repo picks nothing up by itself: remove the label from the issues an
+office should work on. The M0+M1 tasks are issues #1-#13, the M2 platform rules #14-#22, ADR-006 and ADR-008 #23 and
+#24, and the RFC backlog (`WF-001`..`WF-030`) plus the M5-M7 features #25-#61.
+
 ## Import ledger
 
 One row per feature taken from another fork. Cherry-picks keep the source commit in their message (`-x`).

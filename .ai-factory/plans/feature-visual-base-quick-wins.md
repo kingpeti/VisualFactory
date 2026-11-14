@@ -57,7 +57,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
 
 ### Phase 1: Fork hygiene (M0, PR 1)
 
-- [x] Task 1: Commit the AI Factory setup and the decision edits.
+- [x] Task 1: Commit the AI Factory setup and the decision edits. (#1)
   Files: `.ai-factory/config.yaml`, `.ai-factory/DESCRIPTION.md`, `.ai-factory/ARCHITECTURE.md`,
   `.ai-factory/rules/base.md`, `.ai-factory/research/upstream-fork-audit/*`, `.ai-factory/plans/feature-visual-base-quick-wins.md`,
   `AGENTS.md`, `CLAUDE.md` (D-004 zod and D-005 enforcement edits), `.claude/skills/{threejs-react-three-fiber,vitest}`,
@@ -67,7 +67,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   `dist-server`: confirm with `npm pack --dry-run`).
   Logging: none (no runtime code).
 
-- [x] Task 2: Upstream remote, fork ledger and sync procedure.
+- [x] Task 2: Upstream remote, fork ledger and sync procedure. (#1)
   Run `git remote add upstream https://github.com/leonvanzyl/cubefarm.git` (local config, not committed).
   Create `docs/fork.md`: what VisualFactory is, the decisions table (link to ARCHITECTURE.md), the import ledger
   (one row per imported feature: source fork, commits, local commit/PR, adaptations, tests), the sync procedure
@@ -78,7 +78,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   documentation table.
   Logging: none.
 
-- [x] Task 3: `.gitignore` and the debug logging helper.
+- [x] Task 3: `.gitignore` and the debug logging helper. (#1)
   Add `.swarm-home` to `.gitignore` (CLAUDE.md's demo instructions create it in the checkout).
   Create `server/log.ts`: `debugEnabled(scope)` and `debugLog(scope, message, data?)`, reading `SWARM_DEBUG` once at
   import (`1`/`*` = all scopes, or a comma list), printing `[scope] message` plus compact JSON of `data` via
@@ -86,7 +86,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   formatting (spy on `console.log`). Mention `SWARM_DEBUG` in CLAUDE.md (config/scripts section).
   Logging: this task defines it.
 
-- [ ] Task 4: GitHub tracking for the whole programme.
+- [x] Task 4: GitHub tracking for the whole programme. (#1)
   Preconditions (owner actions, see the checkpoint): Issues enabled on kingpeti/VisualFactory (currently off, as on
   every fork) and the gh token refreshed with the `project` scope (`gh auth refresh -s project`).
   Create GitHub milestones M0..M7 (titles and descriptions from README section 7), labels `area:*` (dashboard, merge,
@@ -103,7 +103,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
 
 ### Phase 2: 2D dashboard (M1a, PR 2)
 
-- [ ] Task 5: Merge the supermini dashboard with its history. (depends on 1)
+- [ ] Task 5: Merge the supermini dashboard with its history. (depends on 1) (#3)
   `git remote add supermini https://github.com/supermini/AI-2DFarm.git`, `git fetch supermini`,
   `git merge --no-ff 78a4d42` (157efde..78a4d42 touches 111 files, all under `client/` plus `docs/pocket.md`; no
   server, shared, package or e2e changes), then `git cherry-pick -x 951c3af` (metrics CSS).
@@ -112,7 +112,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   Run typecheck, full `npm test`, `npm run build`. Add the ledger row in `docs/fork.md`.
   Logging: none added by the merge; note in the PR which commits came in.
 
-- [ ] Task 6: Keep the 3D office as the desktop default. (depends on 5)
+- [ ] Task 6: Keep the 3D office as the desktop default. (depends on 5) (#4)
   `client/src/pocket/mode.ts`: restore the narrow/touch inputs to `pickMode` and `startMode` so a wide, non-touch
   screen opens the 3D office and narrow/touch screens open the dashboard; keep `?office=3d`, `?pocket=0` and the
   saved choice (a saved legacy `pocket` value maps to the dashboard). Update `client/src/pocket/mode.test.ts`
@@ -120,7 +120,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   Confirm `e2e/helpers.ts` (`goto('/')`) and `scripts/bench.mjs` (`/?stats`) still open the 3D office.
   Logging: `console.debug('[mode] picked', { mode, reason })` once at startup.
 
-- [ ] Task 7: Dashboard safety and bundle fixes. (depends on 5)
+- [ ] Task 7: Dashboard safety and bundle fixes. (depends on 5) (#5)
   a) Grid terminals read-only: add a prop to `client/src/ui/LiveTerminal.tsx` (e.g. `interactive={false}`) used by
   the dashboard terminal grid tiles, so a tile never sends `{t:'resize'}` (the agent's single shared PTY in
   `server/terminal.ts` takes the last viewer's size) and never forwards keystrokes (Esc would interrupt the agent);
@@ -133,7 +133,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   Logging: `console.debug('[terminal] read-only tile', { agentId })`; `console.warn` when a blocked action is attempted
   during replay.
 
-- [ ] Task 8: Attribution and demo verification of the dashboard. (depends on 6, 7)
+- [ ] Task 8: Attribution and demo verification of the dashboard. (depends on 6, 7) (#6)
   `LICENSE`: add `Copyright (c) 2026 Paulo Lopes` below Leon van Zyl's notice (supermini's MIT notice for the
   imported dashboard). README: one short section on the 2D dashboard and how to switch views.
   Boot the demo office (`npm run build`, then the SAFETY command on port 4391), and screenshot: desktop opens 3D,
@@ -143,12 +143,12 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
 
 ### Phase 3: Reliability and UX quick wins (M1b, PR 3)
 
-- [ ] Task 9: Answer the live trust menu. (depends on 1)
+- [ ] Task 9: Answer the live trust menu. (depends on 1) (#7)
   `git cherry-pick -x 79caf97 68a8ac6` from konstantinknappe-hash/cubefarm (`server/clis.ts` `trustKey` reads the
   last trust marker, `server/clis.test.ts` +2 cases; verified clean on 157efde).
   Logging: `debugLog('trust', 'answered trust prompt', { cli, key })` where `cliRunner.ts` answers it.
 
-- [ ] Task 10: Save a desk's unfinished work before reuse, with pruning. (depends on 1)
+- [ ] Task 10: Save a desk's unfinished work before reuse, with pruning. (depends on 1) (#8)
   `git cherry-pick -x 4d56b71` from mysteryreloaded (`server/workspace.ts` `saveBeforeReuse`,
   `server/workspace.test.ts`; verified clean). Adapt in `server/workspace.ts`: skip desks whose branch starts with
   `swarm-preview` (preview restarts must not write patches); prune `<SWARM_HOME>/leftovers` at save time, oldest
@@ -158,14 +158,14 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   Logging: `debugLog('workspace', 'saved leftovers', { desk, files, bytes })`, `debugLog('workspace', 'pruned', { removed, bytes })`,
   `console.warn` when saving fails (the save must never block the desk).
 
-- [ ] Task 11: Touch-scroll an agent's live terminal on phones. (depends on 5, 7)
+- [ ] Task 11: Touch-scroll an agent's live terminal on phones. (depends on 5, 7) (#9)
   `git cherry-pick -x 2d5b0ea` from mysteryreloaded (`client/src/ui/termTouch.ts` + test, `LiveTerminal.tsx`,
   `styles.css`, `e2e/terminalTouch.spec.ts`), then apply only the `client/src/ui/LiveTerminal.tsx` hunk of 37d6148
   (`git show 37d6148 -- client/src/ui/LiveTerminal.tsx | git apply`); never 37d6148 whole (it adds a stray demo
   state file). Check it works together with task 7's read-only tiles (scrolling allowed, no resize/keys).
   Logging: `console.debug('[termTouch] scroll', { lines })` throttled to once per gesture.
 
-- [ ] Task 12: Typed messages up to 60,000 characters. (depends on 1)
+- [ ] Task 12: Typed messages up to 60,000 characters. (depends on 1) (#10)
   `git cherry-pick -n 4286dec` from mysteryreloaded; in `client/src/ui/MessageBox.tsx` keep upstream's imports and
   add only `import { MESSAGE_MAX } from '../../../shared/message';` (drop the fork's `useTouch`). Keep
   `maxLength={MESSAGE_MAX}`. In `server/swarm.ts` `message()`, a typed message is refused only when empty; longer
@@ -175,7 +175,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
 
 ### Phase 4: Merge governance quick wins (M1c, PR 4)
 
-- [ ] Task 13: Merge holds. (depends on 5)
+- [ ] Task 13: Merge holds. (depends on 5) (#11)
   `git cherry-pick -x 32b3ed8 2698c4c` from TubadoG/cubefarm (floor hold paths with gitignore-style globs, the
   `swarm:hold` label, `Backend.prFiles` with its demo fake, `shared/holds.ts` + tests; verified clean on 157efde).
   Resolve against the dashboard's Kanban refactor (`useCardActions` in `client/src/ui/KanbanView.tsx`) so the held
@@ -185,7 +185,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   Logging: `debugLog('holds', 'held', { repo, pr, reason })`, `debugLog('holds', 'released', { repo, pr })`,
   `console.warn` when the PR file list cannot be read (auto-merge stays fail-closed).
 
-- [ ] Task 14: Re-run QA whenever a passed PR's head moves. (depends on 13)
+- [ ] Task 14: Re-run QA whenever a passed PR's head moves. (depends on 13) (#12)
   In `server/mergeGate.ts`: add pure `retestPatch(rec)` (`status: 'queued'`, `round + 1`, `retests + 1`,
   `passedSha: null`, `mergeNote: null`, `pendingSince: null`) and port `movedSincePass()` from mysteryreloaded
   d67a009 (selects passed records whose PR head differs from `passedSha`).
@@ -199,7 +199,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   Logging: `debugLog('merge', 'head moved since QA pass, requeued', { repo, pr, passedSha, headSha, path })` for each of
   the three paths.
 
-- [ ] Task 15: The manager can request changes on a QA-passed PR. (depends on 13, 14)
+- [ ] Task 15: The manager can request changes on a QA-passed PR. (depends on 13, 14) (#13)
   Apply the portable part of droidsembly 4ac28f4:
   `git show 4ac28f4 -- server shared/types.ts client/src/qaCard.ts client/src/qaCard.test.ts | git apply --3way`
   (server/fixOutcome, prOwnership, qaOutcome, qaPrompt, restartRecovery, sendBack with tests, swarm.ts). Resolve
