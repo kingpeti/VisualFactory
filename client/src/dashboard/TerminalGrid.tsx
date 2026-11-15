@@ -1,7 +1,8 @@
 // The terminals view (#/dev/:floor/terminals): 1, 2, 4 or 6 live terminals side by side, one per agent the manager
 // picked (the busy ones to begin with), and the workers list beside them. Every tile is a /ws/term socket, so a tile
 // that scrolls out of view unmounts its terminal (and closes the socket), and below 760 px only one tile shows at a time.
-// Esc inside a terminal goes to the agent (it interrupts them): LiveTerminal keeps it from closing anything.
+// The tiles only watch (LiveTerminal interactive={false}): an agent has one shared screen, so a tile must not resize it
+// or type into it. Their name opens the drawer, whose terminal takes keys (Esc there interrupts the agent).
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { api } from '../api';
 import { useStore, isBusy, type Agent } from '../store';
@@ -90,7 +91,7 @@ function Tile({ agent, expanded, onExpand, onView }: { agent: Agent; expanded: b
         {!agent.terminal ? (
           <p className="muted small dash-tile-note">{agent.name} works without a terminal (the SDK runtime). Open them in the drawer to read their log.</p>
         ) : inView ? (
-          <LiveTerminal agentId={agent.id} />
+          <LiveTerminal agentId={agent.id} interactive={false} />
         ) : (
           <p className="muted small dash-tile-note">Paused while off screen.</p>
         )}
@@ -149,7 +150,7 @@ export function TerminalGrid({ repoId }: { repoId: string | null }) {
               </button>
             );
           })}
-          <span className="dash-tpick-hint muted small">{narrow ? 'One terminal at a time on a narrow screen.' : `Up to ${MAX_TILES} at once. Click into a terminal to type; Esc there interrupts the agent.`}</span>
+          <span className="dash-tpick-hint muted small">{narrow ? 'One terminal at a time on a narrow screen.' : `Up to ${MAX_TILES} at once, read-only. Click a name to open them and type.`}</span>
         </div>
         {shown.length === 0 ? (
           <p className="muted pk-page">No terminals to show. Agents appear here once the floor has a team.</p>

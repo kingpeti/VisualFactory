@@ -3,8 +3,8 @@ import { useMode } from './pocket/mode';
 import { Captions, LiveRegions } from './ui/CaptionStrip';
 import { ConfirmDialog } from './ui/Confirm';
 
-// Each loads only when it's shown: the dashboard (the default, pocket mode on a phone) never fetches three.js; the
-// 3D office loads only on ?office=3d or when chosen in the app (pocket/mode.ts).
+// Each loads only when it's shown: the dashboard (narrow or touch screens, pocket mode on a phone) never fetches
+// three.js; the 3D office (wide screens, ?office=3d or chosen in the app) loads only then (pocket/mode.ts).
 const Office = lazy(() => import('./Office'));
 const Dashboard = lazy(() => import('./dashboard/Shell'));
 

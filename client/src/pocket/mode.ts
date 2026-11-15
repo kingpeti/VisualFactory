@@ -1,19 +1,21 @@
 // Which office this device gets: the 2D dashboard (client/src/dashboard/, which is also pocket mode on a phone;
-// docs/pocket.md) or the 3D one. The dashboard is the default everywhere; the 3D office is an explicit opt-in:
-// ?office=3d (or the old ?pocket=0) for one visit, or "Open the 3D office" in the app, remembered on this device.
-// ?pocket=1 still asks for the 2D view. A device that remembered "pocket" gets the dashboard.
+// docs/pocket.md) or the 3D one. A wide, non-touch screen opens the 3D office; a narrow or touch screen the dashboard.
+// ?office=3d / ?office=2d (or the old ?pocket=0 / ?pocket=1) decide for one visit; a choice made in the app is
+// remembered on this device, and a device that remembered "pocket" gets the dashboard.
 import { create } from 'zustand';
 
 export type ViewMode = 'dashboard' | 'office';
 
 const KEY = 'cubefarm:mode';
 
-/** The mode to start in: the URL's say (?office=3d, then ?pocket), then this device's last choice, then the dashboard. */
-export function pickMode(x: { office: string | null; pocket: string | null; saved: string | null }): ViewMode {
-  if (x.office === '3d') return 'office';
-  if (x.office === '2d') return 'dashboard';
-  if (x.pocket !== null) return x.pocket === '0' || x.pocket === 'false' ? 'office' : 'dashboard';
-  return x.saved === 'office' ? 'office' : 'dashboard';
+/** The mode to start in: the URL's say (?office, then ?pocket), then this device's last choice, then the screen. */
+export function pickMode(hints: { office: string | null; pocket: string | null; saved: string | null; narrow: boolean; touch: boolean }): ViewMode {
+  if (hints.office === '3d') return 'office';
+  if (hints.office === '2d') return 'dashboard';
+  if (hints.pocket !== null) return hints.pocket === '0' || hints.pocket === 'false' ? 'office' : 'dashboard';
+  if (hints.saved === 'office') return 'office';
+  if (hints.saved === 'dashboard' || hints.saved === 'pocket') return 'dashboard';
+  return hints.narrow || hints.touch ? 'dashboard' : 'office';
 }
 
 function startMode(): ViewMode {
@@ -21,13 +23,22 @@ function startMode(): ViewMode {
   try {
     saved = localStorage.getItem(KEY);
   } catch {
-    // no storage: the default
+    // no storage: decide from the screen
   }
-  const q = new URLSearchParams(location.search);
-  return pickMode({ office: q.get('office'), pocket: q.get('pocket'), saved });
+  const query = new URLSearchParams(location.search);
+  const hints = {
+    office: query.get('office'),
+    pocket: query.get('pocket'),
+    saved,
+    narrow: matchMedia('(max-width: 760px)').matches,
+    touch: matchMedia('(hover: none) and (pointer: coarse)').matches,
+  };
+  const mode = pickMode(hints);
+  console.debug('[mode] picked', { mode, ...hints });
+  return mode;
 }
 
-export const useMode = create<{ mode: ViewMode }>(() => ({ mode: typeof window === 'undefined' ? 'dashboard' : startMode() }));
+export const useMode = create<{ mode: ViewMode }>(() => ({ mode: typeof window === 'undefined' ? 'office' : startMode() }));
 
 /** Switches this device to `mode` and remembers it ('pocket' is the dashboard's old name). */
 export function setMode(mode: ViewMode | 'pocket') {
