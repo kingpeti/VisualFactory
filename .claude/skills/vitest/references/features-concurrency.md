@@ -116,6 +116,7 @@ vitest run --shard=3/3
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         shard: [1, 2, 3]
     steps:
