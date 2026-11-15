@@ -56,7 +56,7 @@ test('compare parsers', async ({ bench }) => {
 ```ts
 test('compare against baseline', async ({ bench }) => {
   await bench.compare(
-    bench('current', { writeResult: './benchmarks/parse.json' }, () => parse(input)),
+    bench('current', { writeResult: './benchmarks/parse-current.json' }, () => parse(input)),
     bench.from('previous', './benchmarks/parse.json'),       // reads a stored result, no run
     bench.from('remote', () => fetch(url).then(r => r.json())),
   )
