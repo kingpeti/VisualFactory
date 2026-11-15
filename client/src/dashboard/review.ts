@@ -3,6 +3,7 @@
 // Passed (waiting on the merge gate) and Merged today. The "needs you" test is the one the role badges and the Kanban
 // board use (qaCard.ts needsManager), so the counts agree.
 import type { PullInfo, QaView, RepoView } from '../../../shared/types';
+import { officeNow } from '../officeTime';
 import { needsManager } from '../qaCard';
 import { qaKey, type Agent } from '../store';
 
@@ -46,9 +47,10 @@ export function openGroup(qa: Pick<QaView, 'status' | 'ceoLooking'> | undefined)
 
 /**
  * The queue of `repos` (the floors on screen), always the five groups in order. Open PRs sit by floor then number;
- * merged ones are today's (since local midnight before `now`), the newest first.
+ * merged ones are today's (since local midnight before `now`), the newest first. `now` defaults to the office's time, so
+ * during the time-lapse "today" is the day being replayed.
  */
-export function reviewQueue(repos: RepoView[], qa: Record<string, QaView>, now: number = Date.now()): ReviewSection[] {
+export function reviewQueue(repos: RepoView[], qa: Record<string, QaView>, now: number = officeNow()): ReviewSection[] {
   const dayStart = new Date(now).setHours(0, 0, 0, 0);
   const sections: ReviewSection[] = REVIEW_GROUPS.map((g) => ({ ...g, items: [] }));
   const into = (group: ReviewGroup) => sections.find((s) => s.group === group)!.items;
@@ -85,12 +87,13 @@ export function findReviewItem(sections: ReviewSection[], pr: number | null): Re
 
 /**
  * Who wrote a PR and who tested it. The QA record names them; for a PR opened before QA saw it, the worker (not a
- * tester: while testing, an agent's prNumber is the PR under test) whose PR number or branch it is.
+ * tester: while testing, an agent's prNumber is the PR under test) on the PR's own floor (`repoId`: PR numbers and
+ * branch names repeat across repositories) whose PR number or branch it is.
  */
-export function reviewAgents(qa: Pick<QaView, 'devAgentId' | 'qaAgentId'> | undefined, pr: Pick<PullInfo, 'number' | 'headRefName'>, agents: Agent[]): { dev: Agent | null; qa: Agent | null } {
-  const byId = (id: string | null | undefined) => (id ? (agents.find((a) => a.id === id) ?? null) : null);
-  const authors = agents.filter((a) => a.role !== 'ceo' && a.task !== 'qa');
-  const dev = byId(qa?.devAgentId) ?? authors.find((a) => a.prNumber === pr.number) ?? authors.find((a) => a.branch && a.branch === pr.headRefName) ?? null;
+export function reviewAgents(qa: Pick<QaView, 'devAgentId' | 'qaAgentId'> | undefined, pr: Pick<PullInfo, 'number' | 'headRefName'>, agents: Agent[], repoId: string): { dev: Agent | null; qa: Agent | null } {
+  const byId = (id: string | null | undefined) => (id ? (agents.find((agent) => agent.id === id) ?? null) : null);
+  const authors = agents.filter((agent) => agent.repoId === repoId && agent.role !== 'ceo' && agent.task !== 'qa');
+  const dev = byId(qa?.devAgentId) ?? authors.find((agent) => agent.prNumber === pr.number) ?? authors.find((agent) => agent.branch && agent.branch === pr.headRefName) ?? null;
   return { dev, qa: byId(qa?.qaAgentId) };
 }
 

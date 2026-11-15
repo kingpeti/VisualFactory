@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { OpsTab } from '../ui/MissionConsole';
 import { TimeLapseTab } from '../ui/TimeLapse';
+import { formatRoute } from './route';
 import './metrics.css';
 
 type Tab = 'ops' | 'timelapse';
@@ -34,6 +35,14 @@ function Throughput() {
   );
 }
 
+/**
+ * An alarm's Kanban and floor links: the dashboard has no Kanban overlay or elevator, so both open the floor's board.
+ * Through the hash (useRoute follows hashchange), as this screen gets no navigate.
+ */
+function toBoard(floor: number) {
+  location.hash = formatRoute({ role: 'dev', floor, view: 'board' });
+}
+
 export function MetricsPanel() {
   const [tab, setTab] = useState<Tab>('ops');
   return (
@@ -46,7 +55,7 @@ export function MetricsPanel() {
         ))}
       </div>
       {tab === 'ops' && <Throughput />}
-      {tab === 'ops' ? <OpsTab /> : <TimeLapseTab dashboard />}
+      {tab === 'ops' ? <OpsTab openKanban={(alarm) => toBoard(alarm.floor)} visitFloor={toBoard} /> : <TimeLapseTab dashboard />}
     </div>
   );
 }

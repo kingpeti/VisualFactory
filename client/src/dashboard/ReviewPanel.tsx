@@ -263,7 +263,7 @@ function Lightbox({ src, caption, page, position, onStep, onClose }: { src: stri
 function Detail({ item, agents, go, floor }: { item: ReviewItem; agents: Agent[]; go: Go; floor: number | null }) {
   const { repo, pr, qa } = item;
   const [tab, setTab] = useState(DETAIL_TABS[0].key);
-  const { dev, qa: tester } = reviewAgents(qa, pr, agents);
+  const { dev, qa: tester } = reviewAgents(qa, pr, agents, repo.id);
   const note = prNote(item);
   const active = DETAIL_TABS.find((t) => t.key === tab) ?? DETAIL_TABS[0];
   const base = useId();
@@ -324,7 +324,7 @@ function Detail({ item, agents, go, floor }: { item: ReviewItem; agents: Agent[]
 
 function Row({ item, on, agents, pick }: { item: ReviewItem; on: boolean; agents: Agent[]; pick: () => void }) {
   const { repo, pr, qa } = item;
-  const { dev, qa: tester } = reviewAgents(qa, pr, agents);
+  const { dev, qa: tester } = reviewAgents(qa, pr, agents, repo.id);
   const note = prNote(item);
   // `note` folds in QA's mergeNote ("waiting for checks: Vercel") where it still means something.
   return (

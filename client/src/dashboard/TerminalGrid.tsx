@@ -50,6 +50,7 @@ function Tile({ agent, expanded, onExpand, onView }: { agent: Agent; expanded: b
   const box = useRef<HTMLElement>(null);
   const inView = useInView(box);
   const openOverlay = useStore((s) => s.openOverlay);
+  const replaying = useStore((state) => state.replaying);
   const [busy, setBusy] = useState(false);
   const working = isBusy(agent);
   useEffect(() => {
@@ -88,7 +89,10 @@ function Tile({ agent, expanded, onExpand, onView }: { agent: Agent; expanded: b
         </button>
       </header>
       <div className="dash-tile-body">
-        {!agent.terminal ? (
+        {/* The time-lapse shows a recorded day, but a terminal's /ws/term socket streams the agent's live screen. */}
+        {replaying ? (
+          <p className="muted small dash-tile-note">Live terminals are off during the time-lapse.</p>
+        ) : !agent.terminal ? (
           <p className="muted small dash-tile-note">{agent.name} works without a terminal (the SDK runtime). Open them in the drawer to read their log.</p>
         ) : inView ? (
           <LiveTerminal agentId={agent.id} interactive={false} />

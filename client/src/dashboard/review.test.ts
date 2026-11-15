@@ -4,6 +4,7 @@ import type { PullInfo, QaStatus, QaView, RepoView } from '../../../shared/types
 // The store (for qaKey) pulls in sounds, which need a browser.
 vi.mock('../ui/sfx', () => ({ alarm: vi.fn(), audioUnlocked: () => false, chirp: vi.fn(), cue: vi.fn() }));
 const { qaKey } = await import('../store');
+const { setReplayMoment } = await import('../officeTime');
 const { autoMergeNote, findReviewItem, reviewActions, reviewAgents, reviewCounts, reviewQueue } = await import('./review');
 type ReviewGroup = import('./review').ReviewGroup;
 
@@ -76,6 +77,17 @@ describe('reviewQueue', () => {
     expect(shape(reviewQueue([r], {}, NOW))).toEqual({ testing: [], failed: [], 'needs-you': [], passed: [], merged: [3, 1] });
   });
 
+  it('during the time-lapse, "merged today" is the replayed day, not the real one', () => {
+    const replayed = repo(1, [pull(1, { state: 'MERGED', mergedAt: YESTERDAY })]);
+    setReplayMoment(new Date('2026-05-09T23:45:00').getTime());
+    try {
+      expect(shape(reviewQueue([replayed], {})).merged).toEqual([1]);
+    } finally {
+      setReplayMoment(null);
+    }
+    expect(shape(reviewQueue([replayed], {})).merged).toEqual([]);
+  });
+
   it('keeps floors apart: floor order, then PR number', () => {
     const a = repo(2, [pull(9), pull(4)]);
     const b = repo(1, [pull(7)]);
@@ -122,19 +134,27 @@ describe('reviewCounts / findReviewItem', () => {
 });
 
 describe('reviewAgents', () => {
-  const agent = (id: string, over: Record<string, unknown> = {}) => ({ id, name: id.toUpperCase(), role: 'worker', task: 'issue', prNumber: null, branch: null, ...over });
-  const r = repo(1, [pull(5, { headRefName: 'fix-5' })]);
+  const floorOne = repo(1, [pull(5, { headRefName: 'fix-5' })]);
+  const floorTwo = repo(2, [pull(5, { headRefName: 'fix-5' })]);
+  const agent = (id: string, over: Record<string, unknown> = {}) => ({ id, name: id.toUpperCase(), repoId: floorOne.id, role: 'worker', task: 'issue', prNumber: null, branch: null, ...over });
 
   it('names the author and the QA agent from the QA record', () => {
-    const [, q] = rec(r, 5, 'testing', { devAgentId: 'a', qaAgentId: 'b' });
-    expect(reviewAgents(q, r.pulls[0], [agent('a'), agent('b')] as never)).toMatchObject({ dev: { id: 'a' }, qa: { id: 'b' } });
+    const [, record] = rec(floorOne, 5, 'testing', { devAgentId: 'a', qaAgentId: 'b' });
+    expect(reviewAgents(record, floorOne.pulls[0], [agent('a'), agent('b')] as never, floorOne.id)).toMatchObject({ dev: { id: 'a' }, qa: { id: 'b' } });
   });
 
   it('falls back to the worker who has the PR, by number then by branch, never to a tester', () => {
-    const pr = r.pulls[0];
-    expect(reviewAgents(undefined, pr, [agent('x', { prNumber: 5 }), agent('t', { prNumber: 5, task: 'qa' })] as never).dev?.id).toBe('x');
-    expect(reviewAgents(undefined, pr, [agent('y', { branch: 'fix-5' })] as never).dev?.id).toBe('y');
-    expect(reviewAgents(undefined, pr, [agent('t', { prNumber: 5, task: 'qa' })] as never)).toEqual({ dev: null, qa: null });
+    const pr = floorOne.pulls[0];
+    expect(reviewAgents(undefined, pr, [agent('x', { prNumber: 5 }), agent('t', { prNumber: 5, task: 'qa' })] as never, floorOne.id).dev?.id).toBe('x');
+    expect(reviewAgents(undefined, pr, [agent('y', { branch: 'fix-5' })] as never, floorOne.id).dev?.id).toBe('y');
+    expect(reviewAgents(undefined, pr, [agent('t', { prNumber: 5, task: 'qa' })] as never, floorOne.id)).toEqual({ dev: null, qa: null });
+  });
+
+  it("only falls back to workers on the PR's own floor: PR numbers and branches repeat across repositories", () => {
+    const otherFloor = [agent('x', { prNumber: 5 }), agent('y', { branch: 'fix-5' })];
+    expect(reviewAgents(undefined, floorTwo.pulls[0], otherFloor as never, floorTwo.id).dev).toBeNull();
+    const ownFloor = agent('z', { repoId: floorTwo.id, prNumber: 5 });
+    expect(reviewAgents(undefined, floorTwo.pulls[0], [...otherFloor, ownFloor] as never, floorTwo.id).dev?.id).toBe('z');
   });
 });
 
