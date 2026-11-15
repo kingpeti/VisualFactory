@@ -105,7 +105,9 @@ expect(fn).toHaveReturned()
 expect(fn).toHaveReturnedWith(value)
 
 // v4 additions
-expect(fn).toHaveBeenCalledExactlyOnceWith('arg1', 'arg2')
+const onceFn = vi.fn()
+onceFn('arg1', 'arg2')
+expect(onceFn).toHaveBeenCalledExactlyOnceWith('arg1', 'arg2')
 expect(fnA).toHaveBeenCalledBefore(fnB)
 expect(fnA).toHaveBeenCalledAfter(fnB)
 ```
@@ -157,7 +159,7 @@ expect('hello world').toEqual(
   expect.stringMatching(/world$/)
 )
 
-expect({ value: null }).toEqual({
+expect({ value: 42 }).toEqual({
   value: expect.anything() // Matches anything except null/undefined
 })
 
@@ -305,7 +307,7 @@ expect(data).toMatchSnapshot()
 expect(data).toMatchInlineSnapshot(`{ "id": 1 }`)
 await expect(result).toMatchFileSnapshot('./expected.json')
 
-expect(() => throw new Error('fail')).toThrowErrorMatchingSnapshot()
+expect(() => { throw new Error('fail') }).toThrowErrorMatchingSnapshot()
 ```
 
 ## Key Points

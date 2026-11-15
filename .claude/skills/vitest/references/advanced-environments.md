@@ -229,8 +229,12 @@ In jsdom/happy-dom, configure CSS handling:
 defineConfig({
   test: {
     css: true, // Process CSS
-    
-    // Or with options
+  },
+})
+
+// Or with options
+defineConfig({
+  test: {
     css: {
       include: /\.module\.css$/,
       modules: {

@@ -26,7 +26,7 @@ defineConfig({
       enabled: true,
       
       // Reporters
-      reporter: ['text', 'json', 'html'],
+      reporter: ['text', 'json', 'html', 'lcov'],
       
       // v4: define `include` to report uncovered files too.
       // Without it, only files loaded during the run are reported.

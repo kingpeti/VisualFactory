@@ -146,13 +146,13 @@ setTimeout(() => console.log('done'), 1000)
 
 // Advance time
 vi.advanceTimersByTime(1000)
-vi.advanceTimersByTimeAsync(1000)  // For async callbacks
+await vi.advanceTimersByTimeAsync(1000)  // For async callbacks
 vi.advanceTimersToNextTimer()
 vi.advanceTimersToNextFrame()      // requestAnimationFrame
 
 // Run all timers
 vi.runAllTimers()
-vi.runAllTimersAsync()
+await vi.runAllTimersAsync()
 vi.runOnlyPendingTimers()
 
 // Clear timers

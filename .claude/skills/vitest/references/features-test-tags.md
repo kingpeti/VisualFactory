@@ -100,21 +100,24 @@ Skip expensive setup when no matching tests are scheduled:
 ```ts
 import { beforeAll, TestRunner } from 'vitest'
 
+// Every complete tag set carried by this file's tests that need the database
+const dbTagSets = [['db'], ['db', 'postgres']]
+
 beforeAll(async () => {
-  if (TestRunner.matchesTags(['db'])) {
+  if (dbTagSets.some((tags) => TestRunner.matchesTags(tags))) {
     await seedDatabase()
   }
 })
 ```
 
-Returns `true` when the active `--tagsFilter` would include a test with those tags (or when no filter is active).
+Returns `true` when the active `--tagsFilter` would include a test with exactly those tags (or when no filter is active). It evaluates the set you pass, not the scheduled tests: with `--tagsFilter "db && postgres"`, `matchesTags(['db'])` is `false` although tests tagged `db` and `postgres` run, so pass each complete tag set (or set up unconditionally). It needs the test runner, so call it from test hooks such as `beforeAll`, never from `globalSetup` (it throws there).
 
 ## Key Points
 
 - Tags must be declared in config; the CLI filter is `--tagsFilter` (not `--tags`)
 - Tags inherit from parent suites and `@module-tag` JSDoc comments
 - Use tags for cross-cutting categories with shared timeout/retry; use [projects](advanced-projects.md) for different pools/environments
-- `TestRunner.matchesTags` gates expensive `globalSetup`/`beforeAll` work
+- `TestRunner.matchesTags` gates expensive `beforeAll` work (not `globalSetup`: no test runner there)
 
 <!--
 Source references:

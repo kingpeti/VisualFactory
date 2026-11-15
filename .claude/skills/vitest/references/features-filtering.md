@@ -59,7 +59,7 @@ vitest run --last-failed
 vitest run --last-failed -t login   # combinable with other filters
 ```
 
-`--since-last-run` enables `changed`, `experimental.recordDependencies` and the `mtime` VCS provider (`experimental.vcsProvider: 'mtime'`); the first run runs everything and records the loaded files (imports, mocks, setup files, snapshots) in `dependencies.json` in `cacheDir`. It cannot see files a test never loaded (new `.env`/`__mocks__` files) or mtimes set in the past by checkouts/archives. Good fit for agents: run `vitest run --since-last-run` after each edit and a full `vitest run` before finishing. Use `--changed <ref>` when the baseline must be shared (PR vs `origin/main`, CI).
+`--since-last-run` enables `changed`, `experimental.recordDependencies` and the `mtime` VCS provider (`experimental.vcsProvider: 'mtime'`); the first run runs everything and records the loaded files (imports, mocks, setup files, snapshots) in `dependencies.json` in `cacheDir`. It cannot see files a test never loaded (new `.env`/`__mocks__` files) or mtimes set in the past by checkouts/archives. Good fit for agents: run `vitest run --since-last-run` after each edit and a full `vitest run` before finishing. This repository installs Vitest 5.0.2, which has neither `--since-last-run` nor `--last-failed`; there, run `vitest run --changed` (uncommitted changes vs `HEAD`) after each edit instead. Use `--changed <ref>` when the baseline must be shared (PR vs `origin/main`, CI).
 
 ## Related Files
 

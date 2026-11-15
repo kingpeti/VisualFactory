@@ -72,7 +72,7 @@ export function App() {
 - `flat` sets NoToneMapping; without it fiber applies ACESFilmicToneMapping — unlike plain three.js, tone mapping is on by default. `linear` switches the output to LinearSRGBColorSpace; the default is sRGB. `legacy` disables three's ColorManagement.
 - `gl`: props for the default `new WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" })`, a renderer instance, or a factory function (the WebGPU path below).
 - `frameloop`: `'always'` renders every frame, `'demand'` renders only after React changes or `invalidate()`, `'never'` hands the loop over (call the module-level `advance(timestamp)` export with a time in seconds; `useFrame`'s delta is the difference between successive timestamps, so milliseconds make it 1000 times too large).
-- `events` replaces the event manager (the default maps DOM pointer events to raycasts); `eventSource` (an element pointer events attach to, default the Canvas wrapper) and `eventPrefix` (`'offset'` by default; `'page'`, `'client'`, `'layer'`, `'screen'` when the page scrolls or transforms the canvas) tune pointer mapping. `onCreated` runs once the renderer exists; `onPointerMissed` fires on clicks that hit nothing.
+- `events` replaces the event manager (the default maps DOM pointer events to raycasts); `eventSource` (an element pointer events attach to, default the Canvas wrapper) and `eventPrefix` (`'offset'` by default; `'page'`, `'client'`, `'layer'`, `'screen'` read those coordinates instead, divided by the Canvas size with no offset subtracted, so they suit only a Canvas at that space's origin, such as `'client'` for a full-viewport Canvas whose `eventSource` is a parent) tune pointer mapping. For a Canvas offset on the page, set your own `compute` (through `onCreated`'s `state.setEvents`) that subtracts the Canvas's `getBoundingClientRect()` from `clientX`/`clientY`. `onCreated` runs once the renderer exists; `onPointerMissed` fires on clicks that hit nothing.
 
 ## The Scene Graph as JSX
 
@@ -333,17 +333,19 @@ function OnDemand() {
 
 React changes (props, state) invalidate automatically. Never call `setState` in `useFrame` — mutate objects through refs, as the Quick Start does; a store or `flushSync` covers the rare case the DOM must follow per-frame values.
 
-Many copies of one shape share one draw call through `Instances`; each `Instance` is a declarative transform (and optional `color`) that composes into the instanced matrix every frame:
+Many copies of one shape share one draw call through `Instances`; each `Instance` is a declarative transform (and optional `color`) that composes into the instanced matrix every frame. `limit` sizes the buffers once, on mount, so give it a fixed capacity that bounds the count (or remount with a new `key` when it must grow):
 
 ```jsx
 import { Instance, Instances } from "@react-three/drei";
 
+const MAX_CROWD = 500;
+
 function Crowd({ count = 200 }) {
   return (
-    <Instances limit={count} castShadow>
+    <Instances limit={MAX_CROWD} castShadow>
       <capsuleGeometry args={[0.25, 0.8, 4, 12]} />
       <meshStandardMaterial />
-      {Array.from({ length: count }, (_, i) => (
+      {Array.from({ length: Math.min(count, MAX_CROWD) }, (_, i) => (
         <Instance
           key={i}
           position={[(i % 15) - 7, 0.65, Math.floor(i / 15) - 7]}

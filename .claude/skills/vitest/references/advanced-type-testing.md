@@ -192,9 +192,6 @@ test('rejects wrong types', () => {
 ## Running Type Tests
 
 ```bash
-# Run type tests
-vitest typecheck
-
 # Run alongside unit tests
 vitest --typecheck
 
@@ -204,7 +201,7 @@ vitest --typecheck.only
 
 ## Mixed Test Files
 
-Combine runtime and type tests:
+Combine runtime and type tests. Vitest only typechecks files matched by `typecheck.include` (default `**/*.{test,spec}-d.?(c|m)[jt]s?(x)`), so add mixed files to it, e.g. `include: ['**/*.{test,test-d}.ts']`:
 
 ```ts
 // user.test.ts
@@ -230,7 +227,7 @@ describe('createUser', () => {
 - `toExtend` for subset matching (`toMatchTypeOf` is deprecated)
 - `toEqualTypeOf` for exact type matching
 - Use `@ts-expect-error` to test type errors
-- Run with `vitest typecheck` or `--typecheck`
+- Run with `vitest --typecheck` or `vitest --typecheck.only`
 
 <!-- 
 Source references:

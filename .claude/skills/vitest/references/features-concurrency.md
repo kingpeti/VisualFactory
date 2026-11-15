@@ -120,10 +120,21 @@ jobs:
         shard: [1, 2, 3]
     steps:
       - run: vitest run --shard=${{ matrix.shard }}/3 --reporter=blob
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blob-${{ matrix.shard }}
+          path: .vitest
+          include-hidden-files: true
       
   merge:
     needs: test
+    if: ${{ !cancelled() }}
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: .vitest
+          merge-multiple: true
       - run: vitest --merge-reports --reporter=junit
 ```
 

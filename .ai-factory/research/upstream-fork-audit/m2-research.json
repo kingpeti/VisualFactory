@@ -1536,7 +1536,7 @@
     },
     {
      "title": "Manager device pairing and credential",
-     "scope": "server/managerAuth.ts (pure): one-time alphanumeric pairing codes with a TTL, 32-byte device tokens, sha256 at rest in secrets.json through secrets.ts merged writes, verify and revoke. Routes: POST /api/pair and GET/DELETE /api/devices (zod). Middleware requires the HttpOnly SameSite=Strict cookie on every unsafe /api route except hooks/mcp, and on /ws/term input. bin/cubefarm.js and scripts/office.mjs open <url>/#pair=<code> and print it. Settings -> Devices pairs a phone with a code or QR and lists and revokes devices. The pocket pairing screen. Demo parity.",
+     "scope": "server/managerAuth.ts (pure): one-time alphanumeric pairing codes (at least 8 characters) with a TTL, the active code invalidated after 5 wrong tries and POST /api/pair rate-limited, 32-byte device tokens, sha256 at rest in secrets.json through secrets.ts merged writes, verify and revoke. Routes: POST /api/pair and GET/DELETE /api/devices (zod). Middleware requires the HttpOnly SameSite=Strict cookie on every unsafe /api route except hooks/mcp and POST /api/pair (which checks the one-time code instead), and on /ws/term input. bin/cubefarm.js and scripts/office.mjs open <url>/#pair=<code> and print it. Settings -> Devices pairs a phone with a code or QR and lists and revokes devices. The pocket pairing screen. Demo parity.",
      "effort": "L",
      "depends_on": [
       "Port-adapt the request boundary (HTTP, /ws, /ws/term)"
@@ -1554,20 +1554,22 @@
       "client/src/pocket/",
       "client/src/ui/"
      ],
-     "tests": "secrets.json never holds a raw token; a code works once and expires; a revoked device gets 401; an unsafe route without the cookie gets 401; /ws/term input from an unpaired viewer is dropped; e2e pairs through the printed code."
+     "tests": "secrets.json never holds a raw token; a code works once and expires; a revoked device gets 401; an unsafe route without the cookie gets 401; POST /api/pair with a valid code and no cookie passes the middleware and sets the cookie; after 5 wrong codes the active code is refused; /ws/term input from an unpaired viewer is dropped; e2e pairs through the printed code."
     },
     {
      "title": "Preview gateway on its own origin",
-     "scope": "Serve /preview/* and /preview/sw.js from a second listener on SWARM_PREVIEW_PORT (opt-in), bound to the same HOST. The office port answers 404 for /preview/*. Client links to the gateway use the preview origin. docs/pocket.md adds `tailscale serve --bg --https=<p> <previewPort>`. On the office PC previews keep opening on their own loopback ports.",
+     "scope": "Serve /preview/* and /preview/sw.js from a second listener on SWARM_PREVIEW_PORT (opt-in), bound to the same HOST. The office port answers 404 for /preview/*. Client links to the gateway use the preview origin. docs/pocket.md adds `tailscale serve --bg --https=<p> <previewPort>`. On the office PC previews keep opening on their own loopback ports. Cookies are scoped by host, not port, so the gateway removes the manager device cookie from the Cookie header it forwards and drops preview Set-Cookie headers that name it, also on WebSocket upgrades through syncProxy.ts tunnel().",
      "effort": "M",
      "files": [
       "server/index.ts",
       "server/config.ts",
       "server/previewGateway.ts",
+      "server/syncProxy.ts",
+      "server/syncProxy.test.ts",
       "client/src/ (gateway URL builder)",
       "docs/pocket.md"
      ],
-     "tests": "The office port refuses /preview/; the preview port serves only /preview/; a request from the preview origin to the office /api is refused by the boundary; e2e smoke in demo."
+     "tests": "The office port refuses /preview/; the preview port serves only /preview/; a request from the preview origin to the office /api is refused by the boundary; a forwarded preview request never carries the device cookie; a preview Set-Cookie naming it is dropped; a WebSocket upgrade through the gateway does not carry it; e2e smoke in demo."
     },
     {
      "title": "Approval record, binding and compare-and-set",
@@ -1623,6 +1625,7 @@
     "Not checked against a live Tailscale Serve: which Host header reaches the office, and whether a second `--https=<port>` listener coexists with `tailscale serve --bg 4317`. The boundary allowlist and the separate preview port both depend on this.",
     "Chrome's Local Network Access prompt (142+) mitigates public-to-loopback requests, but its WebSocket coverage and other browsers' behavior are unverified. Until the boundary ships, any website the manager visits can likely open /ws/term and type into an agent CLI.",
     "Moving the preview gateway off the office origin breaks 'Open in new tab' for phones over Tailscale until users serve the second port. It needs docs and a UI hint.",
+    "Previews on the office PC keep their own loopback ports and bypass the gateway, so with the office on 127.0.0.1 the device cookie reaches those preview servers too. Closing that needs a design choice: open previews on another host name (such as <port>.localhost) or route them through the gateway.",
     "JSONL store: two offices on the same SWARM_HOME would interleave appends. state.json has the same risk today, and a lock file was skipped. Startup scan time grows with run count until finished runs are archived.",
     "If node:sqlite is chosen later, Node 22.x likely still prints ExperimentalWarning and code written against DatabaseSync uses a name deprecated in 26.11.0. The local machine's Node 20.13.1 can't run it, and that version is already below the current engines floor.",
     "Pairing friction: every new browser, phone or cleared PWA needs a re-pair, and e2e helpers must pair through the printed code."
