@@ -45,7 +45,26 @@ const STAGES: [keyof Pipeline, string, string][] = [
   ['needsYou', '⚠️', 'Needs you'],
 ];
 
-function Banners() {
+/** A floor's pipeline as a strip of counts; the Company tab's floors and the developer board's top. */
+export function PipelineStrip({ p, floor }: { p: Pipeline; floor: number }) {
+  return (
+    <div className="pk-pipeline" role="list" aria-label={`Floor ${floor} pipeline`}>
+      {STAGES.map(([k, icon, label]) => (
+        <div key={k} role="listitem" className={`pk-stage ${p[k] ? '' : 'pk-stage-zero'} ${k === 'needsYou' && p[k] ? 'pk-stage-hot' : ''}`}>
+          <span className="pk-stage-n">
+            <span className="pk-stage-icon" aria-hidden>
+              {icon}
+            </span>
+            {p[k]}
+          </span>
+          <span className="pk-stage-label">{label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function Banners() {
   const connected = useStore((s) => s.connected);
   const loaded = useStore((s) => s.loaded);
   const usage = useStore((s) => s.usage);
@@ -61,7 +80,8 @@ function Banners() {
   );
 }
 
-function Company({ go }: { go: (tab: PocketTab, repoId?: string) => void }) {
+/** `banners`: false when the page around it shows Banners already (the dashboard's top bar). */
+export function Company({ go, banners = true }: { go: (tab: PocketTab, repoId?: string) => void; banners?: boolean }) {
   const repos = useStore((s) => s.repos);
   const agents = useStore((s) => s.agents);
   const qa = useStore((s) => s.qa);
@@ -81,7 +101,7 @@ function Company({ go }: { go: (tab: PocketTab, repoId?: string) => void }) {
   const waiting = approvalsBadge(waitingOnYou(repos, qa, requests));
   return (
     <div className="pk-page">
-      <Banners />
+      {banners && <Banners />}
       {waiting > 0 && (
         <button className="pk-callout" onClick={() => go('approvals')}>
           <span>
@@ -114,19 +134,7 @@ function Company({ go }: { go: (tab: PocketTab, repoId?: string) => void }) {
               <div className="muted small pk-ellipsis">{repo.summary || repo.description || repo.fullName}</div>
             </div>
           </div>
-          <div className="pk-pipeline" role="list" aria-label={`Floor ${repo.floor} pipeline`}>
-            {STAGES.map(([k, icon, label]) => (
-              <div key={k} role="listitem" className={`pk-stage ${p[k] ? '' : 'pk-stage-zero'} ${k === 'needsYou' && p[k] ? 'pk-stage-hot' : ''}`}>
-                <span className="pk-stage-n">
-                  <span className="pk-stage-icon" aria-hidden>
-                    {icon}
-                  </span>
-                  {p[k]}
-                </span>
-                <span className="pk-stage-label">{label}</span>
-              </div>
-            ))}
-          </div>
+          <PipelineStrip p={p} floor={repo.floor} />
           <div className="pk-floor-foot small">
             <span className="muted">
               👥 {team} · {busy} busy · 📋 {p.backlog} in backlog
@@ -152,7 +160,7 @@ function Company({ go }: { go: (tab: PocketTab, repoId?: string) => void }) {
 
 // ---------- kanban ----------
 
-function Board({ repoId, pick }: { repoId: string | null; pick: (id: string) => void }) {
+export function Board({ repoId, pick }: { repoId: string | null; pick: (id: string) => void }) {
   const repos = useStore((s) => s.repos);
   const id = repos.some((r) => r.id === repoId) ? repoId! : repos[0]?.id;
   if (!id) return <p className="muted pk-page">No projects yet.</p>;
@@ -174,7 +182,7 @@ function Board({ repoId, pick }: { repoId: string | null; pick: (id: string) => 
 
 // ---------- the shell ----------
 
-function Toasts() {
+export function Toasts() {
   const toasts = useStore((s) => s.toasts);
   const dismiss = useStore((s) => s.dismissToast);
   return (
@@ -189,7 +197,7 @@ function Toasts() {
 }
 
 /** Panels the tabs open over the page: an agent's terminal and a floor's app. */
-function PocketOverlay() {
+export function PocketOverlay() {
   const overlay = useStore((s) => s.overlay);
   if (overlay?.kind === 'terminal' && overlay.agentId !== CEO_ID) return <TerminalView agentId={overlay.agentId} />;
   if (overlay?.kind === 'app') return <AppViewer repoId={overlay.repoId} />;

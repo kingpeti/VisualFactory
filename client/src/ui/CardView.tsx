@@ -2,8 +2,7 @@ import { useMemo } from 'react';
 import { blockers } from '../../../shared/issues';
 import { agentsOnRepo, kanbanFor, useStore, type Agent, type KanbanCard } from '../store';
 import { elapsedLabel } from '../qaCard';
-import { bodyExcerpt, cardLabel, canPeel, locateCard } from '../world/whiteboard';
-import type { Col } from '../world/stickies';
+import { bodyExcerpt, cardLabel, canPeel, findCard, type Col } from '../cards';
 import { Key } from './Key';
 import { Markdown } from './Markdown';
 import { Panel } from './Panel';
@@ -31,15 +30,17 @@ function Who({ agent, children }: { agent?: Agent; children: React.ReactNode }) 
   );
 }
 
-export function CardView({ repoId, cardKey, number, pr }: { repoId: string; cardKey: string; number: number; pr: boolean }) {
+/** `embedded`: the content alone, for a drawer that has its own title and close button (the dashboard's board). */
+export function CardView({ repoId, cardKey, number, pr, embedded }: { repoId: string; cardKey: string; number: number; pr: boolean; embedded?: boolean }) {
   const repo = useStore((s) => s.repos.find((r) => r.id === repoId));
   const allAgents = useStore((s) => s.agents);
   const qaRecords = useStore((s) => s.qa);
   const agents = useMemo(() => agentsOnRepo(allAgents, repoId), [allAgents, repoId]);
   const cols = useMemo(() => (repo ? kanbanFor(repo, agents, qaRecords) : null), [repo, agents, qaRecords]);
-  const at = cols ? locateCard(cols, cardKey, number, pr) : null;
+  const at = cols ? findCard(cols, cardKey, number, pr) : null;
 
   if (!repo || !at) {
+    if (embedded) return <p className="muted">That card isn't on the board any more.</p>;
     return (
       <Panel title={`📌 ${cardLabel({ number, pr })}`} className="cardview">
         <p className="muted">That card isn't on the board any more.</p>
@@ -56,16 +57,8 @@ export function CardView({ repoId, cardKey, number, pr }: { repoId: string; card
   const excerpt = issue ? bodyExcerpt(issue.body) : null;
   const url = card.url ?? pull?.url ?? issue?.url;
 
-  return (
-    <Panel
-      className="cardview"
-      accent={repo.color}
-      title={
-        <span>
-          📌 {cardLabel(card)} {card.title}
-        </span>
-      }
-    >
+  const content = (
+    <>
       <div className="cardview-tags">
         <span className="pill">{COLUMN[col]}</span>
         {card.note && <span className={`pill ${card.tone ? `cardview-${card.tone}` : ''}`}>{card.note}</span>}
@@ -109,7 +102,7 @@ export function CardView({ repoId, cardKey, number, pr }: { repoId: string; card
         )}
         <span className="spacer" />
         <span className="muted small">
-          {canPeel(col, card) && (
+          {!embedded && canPeel(col, card) && (
             <>
               <Key action="drop" /> on the sticky takes it to a free agent's desk ·{' '}
             </>
@@ -117,6 +110,20 @@ export function CardView({ repoId, cardKey, number, pr }: { repoId: string; card
           <kbd>Esc</kbd> closes
         </span>
       </div>
+    </>
+  );
+  if (embedded) return <div className="cardview-embedded">{content}</div>;
+  return (
+    <Panel
+      className="cardview"
+      accent={repo.color}
+      title={
+        <span>
+          📌 {cardLabel(card)} {card.title}
+        </span>
+      }
+    >
+      {content}
     </Panel>
   );
 }

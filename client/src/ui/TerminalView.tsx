@@ -1,7 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CareerCard } from './CareerCard';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api';
-import { isBusy, kanbanFor, agentsOnRepo, useStore } from '../store';
+import { isBusy, kanbanFor, agentsOnRepo, useStore, type Agent } from '../store';
 import { AgentSetup } from './AgentSettings';
 import { confirmDialog } from './Confirm';
 import { LiveTerminal } from './LiveTerminal';
@@ -12,8 +11,7 @@ import { MessageBox } from './MessageBox';
 import { MicButton } from './MicButton';
 import { closeOverlay, Panel } from './Panel';
 import { loadScreenshot } from '../screenshot';
-import { toolVerb } from '../world/draw';
-import { followAgent } from '../world/camera/rig';
+import { toolVerb } from '../toolVerb';
 
 const STATUS_LABEL: Record<string, string> = {
   idle: 'free',
@@ -34,7 +32,33 @@ function elapsed(from: number | null, to: number | null) {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-export function TerminalView({ agentId }: { agentId: string }) {
+/** What wraps the agent's title and body: the office's modal Panel by default, the 2D dashboard's drawer instead (a component, kept stable). */
+export type TerminalFrame = (p: { title: ReactNode; accent?: string; children: ReactNode }) => ReactNode;
+
+const PanelFrame: TerminalFrame = ({ title, accent, children }) => (
+  <Panel wide accent={accent} title={title}>
+    {children}
+  </Panel>
+);
+
+/**
+ * One agent's panel. The 3D office passes `onFollow` (the camera trails them; the button is hidden without it) and
+ * `lookEditor` (the look editor, which needs the 3D preview) and `careerCard` (the career card with its portrait; the
+ * 🏅 Career button is hidden without it).
+ */
+export function TerminalView({
+  agentId,
+  onFollow,
+  lookEditor,
+  careerCard,
+  frame: Frame = PanelFrame,
+}: {
+  agentId: string;
+  onFollow?: (agentId: string) => void;
+  lookEditor?: (agent: Agent) => ReactNode;
+  careerCard?: (agent: Agent) => ReactNode;
+  frame?: TerminalFrame;
+}) {
   const agent = useStore((s) => s.agents[agentId]);
   const log = useStore((s) => s.logs[agentId]) ?? [];
   const shotAt = useStore((s) => s.screens[agentId]);
@@ -84,9 +108,9 @@ export function TerminalView({ agentId }: { agentId: string }) {
 
   if (!agent || !repo) {
     return (
-      <Panel title="Terminal">
+      <Frame title="Terminal">
         <p className="muted">That agent has left the building.</p>
-      </Panel>
+      </Frame>
     );
   }
 
@@ -114,8 +138,7 @@ export function TerminalView({ agentId }: { agentId: string }) {
   };
 
   return (
-    <Panel
-      wide
+    <Frame
       accent={agent.color}
       title={
         <div className="term-title">
@@ -134,10 +157,12 @@ export function TerminalView({ agentId }: { agentId: string }) {
           )}
           {working && agent.currentTool && <span className="muted small">{toolVerb(agent.currentTool)}…</span>}
           <span className="spacer" />
-          <button className="btn btn-small" title={`Trail ${agent.name} with the camera wherever they go (a movement key or Esc gives you the controls back)`} onClick={() => followAgent(agent.id)}>
-            🎥 Follow
-          </button>
-          {agent.career && (
+          {onFollow && (
+            <button className="btn btn-small" title={`Trail ${agent.name} with the camera wherever they go (a movement key or Esc gives you the controls back)`} onClick={() => onFollow(agent.id)}>
+              🎥 Follow
+            </button>
+          )}
+          {careerCard && agent.career && (
             <button className={`btn btn-small setup-toggle ${showCareer ? 'setup-toggle-on' : ''}`} aria-expanded={showCareer} title={`${agent.name}'s career on the team`} onClick={() => setShowCareer((v) => !v)}>
               🏅 Career
             </button>
@@ -213,10 +238,10 @@ export function TerminalView({ agentId }: { agentId: string }) {
           </button>
         </div>
       )}
-      {showCareer && <CareerCard agent={agent} />}
+      {careerCard && showCareer && careerCard(agent)}
       {showSetup && (
         <div id="agent-setup" className="setup-wrap">
-          <AgentSetup agent={agent} />
+          <AgentSetup agent={agent} lookEditor={lookEditor?.(agent)} />
         </div>
       )}
 
@@ -345,6 +370,6 @@ export function TerminalView({ agentId }: { agentId: string }) {
           Let go
         </button>
       </div>
-    </Panel>
+    </Frame>
   );
 }

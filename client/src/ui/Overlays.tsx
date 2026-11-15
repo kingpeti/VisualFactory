@@ -12,8 +12,11 @@ import { Interview } from './Interview';
 import { KanbanView } from './KanbanView';
 import { ManagerConsole } from './ManagerConsole';
 import { Panel } from './Panel';
-import { Phone } from './Phone';
+import { Phone3D } from './Phone3D';
 import { TerminalView } from './TerminalView';
+import { CareerCard } from './CareerCard';
+import { LookEditor } from './LookEditor';
+import { followAgent } from '../world/camera/rig';
 import { getAudioPrefs, setAudioPrefs, subscribeAudio } from './sfx';
 import { CHATTER_LEVELS, SOUND_GROUPS, type ChatterLevel, type SoundGroup } from './audioPrefs';
 import type { DayMode } from '../world/sky/time';
@@ -428,9 +431,9 @@ export function Overlays() {
   if (!overlay) return null;
   switch (overlay.kind) {
     case 'terminal':
-      return overlay.agentId === CEO_ID ? <ManagerConsole initialTab="ceo" /> : <TerminalView agentId={overlay.agentId} />;
+      return overlay.agentId === CEO_ID ? <ManagerConsole initialTab="ceo" /> : <TerminalView agentId={overlay.agentId} onFollow={followAgent} lookEditor={(a) => <LookEditor agent={a} />} careerCard={(a) => <CareerCard agent={a} />} />;
     case 'phone':
-      return <Phone tab={overlay.tab} requestId={overlay.requestId} />;
+      return <Phone3D tab={overlay.tab} requestId={overlay.requestId} />;
     case 'kanban':
       return <KanbanView repoId={overlay.repoId} />;
     case 'card':
