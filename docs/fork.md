@@ -27,6 +27,7 @@ One row per feature taken from another fork. Cherry-picks keep the source commit
 
 | Feature | Source | Commits | Here | Adaptations | Tests |
 |---------|--------|---------|------|-------------|-------|
+| 2D dashboard | [supermini/AI-2DFarm](https://github.com/supermini/AI-2DFarm) | merge of 78a4d42 (51 commits), cherry-pick 951c3af | #63 | the 3D office stays the desktop default (`pocket/mode.ts`); read-only grid terminals (`ui/termSend.ts`); copyright line in LICENSE | the fork's own, `mode.test.ts`, `termSend.test.ts`, `noWorldImports.test.ts` |
 
 ## Syncing with upstream
 
