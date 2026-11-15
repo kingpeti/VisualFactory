@@ -1,0 +1,1636 @@
+{
+ "opencode2": {
+  "research": {
+   "summary": "The latest OpenCode is 2.3.0, released 2026-11-13 as npm `@opencode/cli` from anomalyco/opencode. The V1 line still ships separately as `opencode-ai` (latest 1.19.5), and both install an `opencode` command. OpenCode is not installed on this machine, so nothing was run; every fact below comes from the npm registry, the v2 docs (opencode.ai/v2/*.md) or v2.3.0 source on GitHub.\n\nUpstream 157efde is V1-only and breaks on V2 in three verified places:\n- It configures the plugin as a single .mjs file. V2 skips any configured plugin path that is not a directory, so turn-end reports never arrive.\n- It passes `--model` to the full-screen TUI, which in V2 has no such flag (only `run` and `mini` do).\n- It uses the shared background service. With several agents, each agent's config and notify URL leak through the first agent's server unless every session runs with `--standalone`.\n\nSmaller stale points: the V1 config keys (`plugin`, `permission`, a flat `mcp`, `provider` with `npm`, `autoupdate`) still load but are deprecated. `autoupdate` in OPENCODE_CONFIG_CONTENT does nothing, because the V2 updater reads only global config files. V2 MCP servers default to Code Mode. V2 reads only AGENTS.md, never CLAUDE.md.\n\nFork comparison:\n- rosariomoscato/droidsembly (8adf85b, fa4e3fa, b10b23b, f99c760) matches v2.3.0 best. It uses native V2 config (`plugins` with options, `mcp.servers` with codemode false, `agents`, `providers` with `@opencode/ai/providers/openai-compatible`, ordered `permissions`). It also runs `--standalone`, assigns its own `ses_` session IDs (filtered exactly in the plugin), listens to `session.execution.*` events and requires 2.x. It sits on top of #311 and 157efde and has the most tests, but it is mixed in with telemetry, i18n, branding and Box work, so it has to be extracted, not cherry-picked.\n- mysteryreloaded (778ed82, 625cee7, 7d1a0ce, 8dc1d0c) is the smallest correct shape: `--standalone`, a plugin folder exporting `{ id, setup }`, and the model set in config. But its base predates #311 (conflicts in the opencode launch branch and its tests), it keeps V1 keys, guesses the root session as \"the first one seen\", and listens for `session.error`, which is not on v2.3.0's public event stream. As a result failed turns are never reported as TurnError.\n- Calel33 (273479d and the rest) supports V1 and V2 side by side, which contradicts D-001. It does not use `--standalone` (breaks with several agents), does not filter child sessions, and is based on 961bce6, before #311. Its off-PATH CLI lookup and its effort-to-`#variant` mapping are reusable ideas.\n- francovp ceo-any-cli (625e1df, 7685466) includes #311, but its OpenCode half is V1-only: `--model`, the `chat.message` hook, the TUI `model.json` state file, a prompt-ready screen regex, and a remote MCP entry without `oauth: false`. Its CLI-neutral parts are worth keeping: the `nextSession` CLI switch, the CEO CLI setting, per-CLI office tool names, read-only office file tools with realpath containment, and the Codex CEO read-only flags. It also has the `effectiveModel` bug that rejects Codex `ollama/...` models.\n\nThe upstream OpenCode touchpoints, each with file:line, are listed in the facts. Paths are relative to C:/Users/peti/dev/kingpeti/VisualFactory/.claude/worktrees/repo-audit-ai-factory-74210e. My notes and downloaded docs are in C:/Users/peti/AppData/Local/Temp/claude/c968d675ef2f985c/23326b94-69a1-40d9-887d-ac86b5b528d8/scratchpad/oc2docs.\n\nThere is a conflict to resolve before the D-005 work: the project CLAUDE.md SAFETY section still says \"don't add hooks, permission rules or sandboxes that refuse tool calls\", while D-005 asks for exactly that. Which one wins needs your decision.",
+   "recommendation": "Hand-port a V2-only integration onto 157efde in small PRs. Use droidsembly's design as the reference: native V2 config, `--standalone`, an office-assigned `ses_` ID passed with `--session`, plugin options instead of environment variables, and `session.execution.*` events. Keep the diff as small as mysteryreloaded's. Drop all V1 code paths (D-001) and take nothing from Calel33's dual-version code.\n\nLanding order:\n1. A version check that refuses OpenCode below 2.x with the install command.\n2. The V2 launch and plugin.\n3. Migrate the #311 local models to V2 providers. Ollama and LM Studio use V2's built-in discovery; llama.cpp and oMLX become custom openai-compatible providers.\n4. CEO on any CLI, part 1: francovp's CLI-neutral and Codex parts plus the `effectiveModel` fix, with an OpenCode CEO refused for now.\n5. CEO on OpenCode 2: office MCP as a remote server with `oauth: false` and `codemode: false`; deny edit, shell, subagent and question.\n6. D-005 rules for OpenCode: ordered `permissions` deny rules plus a plugin `permission.hook('evaluate')`.\n\nOpenCode 2 must land before CEO-on-any-CLI. Otherwise francovp's OpenCode-1 code lands only to be rewritten, and the two PRs collide in the same `launchArgs` branch. Before step 6, resolve the conflict between the CLAUDE.md SAFETY section and D-005. Before merging step 2, run it once by hand against a real OpenCode 2.3.0 on Windows.",
+   "options": [
+    {
+     "name": "Cherry-pick mysteryreloaded 778ed82, 625cee7, 7d1a0ce, 8dc1d0c",
+     "pros": "Smallest diff (only clis.ts, cliRunner.ts, clis.test.ts). Behaviour was observed on a real 2.1.3 (`--standalone`, model in config, plugin folder). Includes a test against the real CLI that is skipped when it is not installed.",
+     "cons": "Its base predates #311, so it conflicts with 157efde's opencode branch and the local-model test. Keeps V1 config keys. Waits for `session.error`, which v2.3.0 does not emit, so failed turns hang or read as success. Guesses the root session as the first one seen."
+    },
+    {
+     "name": "Port droidsembly 8adf85b (+fa4e3fa, b10b23b)",
+     "pros": "Matches v2.3.0 docs and source best. Built on #311 and 157efde. Already includes a version check, CEO on V2, interrupt and failure handling, and V2 model refs with variants. Has the most OpenCode tests (opencodePlugin.test.ts, cliRunnerOpenCode.test.ts, ceoRuntime.test.ts).",
+     "cons": "8adf85b alone touches 37 files and mixes in telemetry (AiUsage, AiResource, AiLimit), the analysis task, i18n, branding, a model picker and the `opencode models` integration. Not cleanly cherry-pickable. Its local providers override V2's built-in ollama and lmstudio discovery."
+    },
+    {
+     "name": "Port Calel33 opencode-v2-support (273479d, e2e7782, 8687c64, 3890248, bd3837e)",
+     "pros": "Detects the CLI's major version. Maps effort to the model `#variant`. Gives an OpenCode CEO the office MCP. Finds CLIs off PATH.",
+     "cons": "Keeps V1 working too, which D-001 rejects. No `--standalone`, so with several agents config and notify URLs leak through the shared service. No child-session filter. Moves instructions into the agent prompt based on an unverified claim that `instructions` are ignored, which the V2 docs contradict. Base 961bce6 lacks #311."
+    },
+    {
+     "name": "Hand-port a minimal V2 integration, droidsembly as reference (recommended)",
+     "pros": "V2-only per D-001. Small PRs that fit 157efde and #311. Picks the verified-correct parts: `--standalone`, office-assigned `ses_` IDs, plugin `options`, `execution.*` events, native V2 config, codemode false. Leaves telemetry and Box work out.",
+     "cons": "New code instead of a cherry-pick, so it needs its own tests and one manual run against a real V2. Upstream syncs in clis.ts and cliRunner.ts will cost more (already accepted in D-001)."
+    }
+   ],
+   "facts": [
+    {
+     "claim": "The latest OpenCode is 2.3.0, published on npm as @opencode/cli on 2026-11-13. 2.0.0 was published on 2026-09-11. There were 48 releases from 2.0.0 to 2.3.0.",
+     "source": "https://registry.npmjs.org/@opencode/cli (dist-tags.latest, time)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "GitHub release v2.3.0 of anomalyco/opencode was published 2026-11-13 (default branch: dev). The npm package's repository is github.com/anomalyco/opencode.",
+     "source": "https://api.github.com/repos/anomalyco/opencode/releases; registry metadata of @opencode/cli",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The V1 line is still published as opencode-ai (latest 1.19.5, 2026-10-28). @opencode-ai/sdk and @opencode-ai/plugin are also at 1.19.5.",
+     "source": "https://registry.npmjs.org/opencode-ai; https://registry.npmjs.org/@opencode-ai/sdk",
+     "confidence": "verified"
+    },
+    {
+     "claim": "@opencode/cli 2.3.0 exposes two bins, `opencode` and `opencode2`, both pointing to bin/opencode.exe, with per-platform optionalDependencies including windows-x64 and windows-arm64 and a postinstall script.",
+     "source": "https://registry.npmjs.org/@opencode/cli (versions['2.3.0'].bin, optionalDependencies, scripts)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "V2 install options: npm install -g @opencode/cli, the curl script at https://opencode.ai/v2/install, or brew anomalyco/tap/opencode-v2. Windows package managers are not supported; standalone Windows zips exist. V1 and V2 both use the `opencode` command, so a package-managed V1 must be removed first.",
+     "source": "https://opencode.ai/v2/index.md (CLI section); https://opencode.ai/v2/migrate-v1.md lines 1-4",
+     "confidence": "verified"
+    },
+    {
+     "claim": "OpenCode is not installed on this machine, so no --version or --help was run.",
+     "source": "`where opencode` → 'Could not find files'; `which opencode` → not found",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The V2 full-screen TUI (root command) accepts --standalone, --server, --auto, a directory argument, --continue/-c, --session/-s ('Session ID to continue, or to create if it does not exist') and --prompt. It has no --model flag.",
+     "source": "anomalyco/opencode@v2.3.0 packages/cli/src/commands/commands.ts:14-70",
+     "confidence": "verified"
+    },
+    {
+     "claim": "`opencode run` (headless) accepts --model in the form provider/model#variant, plus --agent, --format json, --session, --continue, --fork, --file, --title, --archived, --thinking, --auto, --standalone and --server. `opencode mini` accepts --model, --prompt and --session.",
+     "source": "anomalyco/opencode@v2.3.0 packages/cli/src/commands/commands.ts:364-450; https://opencode.ai/v2/cli/commands.md",
+     "confidence": "verified"
+    },
+    {
+     "claim": "In V2 the TUI model comes from config: the top-level `model` key or `agents.<id>.model`, in the form provider/model#variant. A fork observed that passing --model to the 2.1.3 TUI makes the CLI exit at once with ShowHelp.",
+     "source": "https://opencode.ai/v2/migrate-v1.md (Agents and modes); mysteryreloaded 8dc1d0c commit message",
+     "confidence": "likely"
+    },
+    {
+     "claim": "By default every V2 client connects to one shared background server per user, which owns sessions, configuration, permissions and tool execution. --standalone runs a private server instead.",
+     "source": "https://opencode.ai/v2/cli.md (Background service); packages/cli/src/commands/handlers/default.ts:35-52",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The standalone server is spawned as a child process with `--stdio --port 0` and a random OPENCODE_PASSWORD.",
+     "source": "anomalyco/opencode@v2.3.0 packages/cli/src/services/standalone.ts:17-53",
+     "confidence": "verified"
+    },
+    {
+     "claim": "A --session ID that does not exist yet becomes the ID of the session the first prompt creates. Session IDs only need to start with 'ses'.",
+     "source": "packages/cli/src/commands/handlers/default.ts:53-61,114-118; packages/schema/src/session-id.ts",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The TUI opens a resumed --session with the --prompt text as its startup prompt.",
+     "source": "anomalyco/opencode@v2.3.0 packages/tui/src/app.tsx:664-684",
+     "confidence": "verified"
+    },
+    {
+     "claim": "V2 still loads OPENCODE_CONFIG_CONTENT as an inline config document.",
+     "source": "anomalyco/opencode@v2.3.0 packages/core/src/config.ts:289-302",
+     "confidence": "verified"
+    },
+    {
+     "claim": "V2 still accepts most V1 config fields and normalizes them in memory. The intended breaking changes are only: plugins, the server API, and tui.json moving to cli.json.",
+     "source": "https://opencode.ai/v2/migrate-v1.md (Breaking changes, Use your existing configuration)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The V2 plugin config key is `plugins`, whose entries are a package or path string or `{ package, options }`. Configured local paths must be directories; a path to a single file is skipped. A plugin can be disabled with a '-<id>' entry.",
+     "source": "https://opencode.ai/v2/plugins.md (Configure, Control); migrate-v1.md (Plugins)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "A V2 server plugin is a default export `{ id, setup(ctx) }`. Plugin.define is the identity function, so an import-free object works. setup may return a cleanup function, and ctx.options carries the plugin's options.",
+     "source": "anomalyco/opencode@v2.3.0 packages/plugin/src/promise/plugin.ts:30,62-71; https://opencode.ai/v2/build/plugins/server.md (Lifecycle)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "V2 plugins receive events through ctx.event.subscribe(), and the events carry `data`. Relevant public events: session.created (with parentID), session.status (idle, busy, retry), session.idle (deprecated), session.execution.started, succeeded, failed (with error) and interrupted (with reason), session.text.ended (with text), session.tool.called, success and failed, session.step.ended (with cost and tokens), session.usage.updated (with cost and tokens).",
+     "source": "packages/schema/src/session-event.ts:40-60,160-180,245-265,368-395,405-440,520-575; packages/schema/src/session-status-event.ts:35-53; packages/schema/src/event-manifest.ts:72-83",
+     "confidence": "verified"
+    },
+    {
+     "claim": "`session.error` is not on the V2 public event stream: it is absent from the session, status and legacy event definitions.",
+     "source": "packages/schema/src/session-event.ts; session-status-event.ts; v1/legacy-event.ts; event-manifest.ts:72-83 (legacy events only in Definitions, line 95)",
+     "confidence": "likely"
+    },
+    {
+     "claim": "V2 plugin hooks include ctx.tool.hook('execute.before' and 'execute.after'), ctx.permission.hook('evaluate') (may set effect to deny; a configured deny is final), ctx.shell.hook('create.before'), and ctx.session.hook for prompt, context and model.request.",
+     "source": "https://opencode.ai/v2/build/plugins/server.md (Hooks: Permissions, Shell, Tools); build/plugins/migrate-v1.md hook table",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The V2 MCP config sits under mcp.servers.<name>. A local server is { type: 'local', command[], cwd, environment, disabled, codemode, timeout }. A remote server is { type: 'remote', url, headers, oauth (false to disable; OAuth is the default), disabled, codemode }. `enabled` became `disabled`. Code Mode is on by default, and tools are named <server>_<tool>.",
+     "source": "https://opencode.ai/v2/mcp-servers.md (Config, Local, Remote, Names, Permissions); migrate-v1.md (MCP servers)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "V2 permissions are an ordered `permissions` array of { action, resource, effect: allow, ask or deny }, where the last match wins and no match means ask. The actions include read, edit, glob, grep, shell (bash in V1), subagent (task in V1), skill, question, webfetch, websearch, external_directory and <server>_<tool>. Per-agent rules live in agents.<id>.permissions. A shell scanner covers Bash, POSIX sh and PowerShell.",
+     "source": "https://opencode.ai/v2/permissions.md (Configure, Rules, Actions, Scanner, Agents)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "--auto auto-approves permissions that are not explicitly denied. The default base policy allows everything, and only .env reads ask. external_directory is allowed by default in V2.",
+     "source": "packages/cli/src/commands/commands.ts:37-46; https://opencode.ai/v2/permissions.md (Defaults); migrate-v1.md (Permissions callout)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Policies (`policies`, e.g. tool.use 'shell:git push *' deny) only ever tighten and override ask decisions and saved approvals. Precedence is documented for managed, system, Console, global and project files, but not for OPENCODE_CONFIG_CONTENT.",
+     "source": "https://opencode.ai/v2/policies.md (Tools, Precedence)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The V2 updater reads its policy only from the global config files (config.json, opencode.json, opencode.jsonc) and defaults to 'notify'. `autoupdate: false` in OPENCODE_CONFIG_CONTENT therefore has no effect.",
+     "source": "anomalyco/opencode@v2.3.0 packages/cli/src/services/updater.ts:133-141,198-205; https://opencode.ai/v2/config.md (Updates: 'Project-level values are ignored')",
+     "confidence": "verified"
+    },
+    {
+     "claim": "V2 discovers Ollama (127.0.0.1:11434) and LM Studio (127.0.0.1:1234/v1) as built-in providers `ollama` and `lmstudio`; settings.baseURL overrides the address. Other OpenAI-compatible servers need a custom provider: { package: '@opencode/ai/providers/openai-compatible', settings: { baseURL }, models }.",
+     "source": "https://opencode.ai/v2/providers.md (Custom, Packages, Ollama, Runtimes); https://opencode.ai/v2/models.md (Local)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "V2 reads only AGENTS.md (global, then upward from the workspace) followed by the configured `instructions`. It has no CLAUDE.md fallback.",
+     "source": "https://opencode.ai/v2/instructions.md (Scope note, Ordering, Configuration)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Usage and cost data in V2: cost in USD and token counts on session.step.ended and session.usage.updated events, `opencode stats --cost --json`, and `opencode session export`.",
+     "source": "packages/schema/src/session-event.ts:160-180,372-385; https://opencode.ai/v2/cli/commands.md (stats, session)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Upstream starts OpenCode with V1-only arguments: `--auto`, a `--model` flag (mapped for local models), `--session`, `--prompt`. Its OPENCODE_CONFIG_CONTENT uses V1 keys: `plugin` (a file URL), `instructions`, `autoupdate: false`, a `permission` object, a V1 provider entry, and `mcp.playwright` with enabled: true.",
+     "source": "server/clis.ts:288-308, 211-220",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The upstream OpenCode plugin is a V1 single-file default async function using the `event` hook (session.created, session.idle, session.error with props.info) and client.session.messages. cliRunner writes it as a single file, bin/opencode-plugin.mjs.",
+     "source": "server/clis.ts:445-474; server/cliRunner.ts:105-116, 880",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Other upstream OpenCode touchpoints: clis.ts:24 (integrated:false) and :122-131 (detectClis, no version check); cliRunner.ts:506 (TurnError), :519-531 (screenshot collection), :722-750 (TurnComplete and TurnError handling), :806-810 (Box refusal), :895 (strips inherited OPENCODE_CONFIG_CONTENT); swarm.ts:2682 (the CEO is always claude), :4369 (CEO sessionCli is 'claude'), and Box exclusions at :355, :2210, :2279, :2385, :2461, :2525, :3052; ceo.ts:55 (CLI enum) and :272,275 (mcp__office__ tool names); shared/models.ts:13-52; shared/types.ts:178, 218-225; shared/cloud.ts:36-37; demo.ts:847-848.",
+     "source": "files at upstream 157efde in the checkout",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Upstream tests tied to the V1 shape: clis.test.ts:24-25 (opencode-ai shim path), :159-163 (V1 permission and autoupdate), :177-184 (#311 V1 provider and --model); browser.test.ts:69-70 (opencode.mcp.playwright). Docs: README.md:21,45-52; docs/agents.md:23-32; docs/how-it-works.md:79,89; ManagerConsole.tsx:666.",
+     "source": "grep over the checkout",
+     "confidence": "verified"
+    },
+    {
+     "claim": "#311 (local models) is upstream commit 5bd09db, an ancestor of 157efde.",
+     "source": "git log in the Calel33 fork clone (upstream/main = 157efde)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "droidsembly's main contains 157efde, and 8adf85b contains #311. Its V2 launch uses `--standalone --auto --session ses_cubefarm<uuid> --prompt`, native V2 `plugins` with { sessionID, notifyUrl } options, `agents`, `mcp.servers` (office: remote with oauth:false and codemode:false) and `providers` with @opencode/ai/providers/openai-compatible. It requires OpenCode 2.x and pins 2.2.6 for Boxes.",
+     "source": "rosariomoscato fork: git show origin/main:server/clis.ts lines 135-156, 193, 244-353, 500-636",
+     "confidence": "verified"
+    },
+    {
+     "claim": "mysteryreloaded's final V2 plugin listens for session.idle and session.execution.succeeded, deduplicated within 1 s, treats the first session seen as the root, and reports TurnError only on `session.error`. Its launch is `--auto --standalone [--session] --prompt` with V1 config keys and the model in config.",
+     "source": "mysteryreloaded fork: git show main:server/clis.ts lines 284-303, 428-520; commits 625cee7, 7d1a0ce, 8dc1d0c",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Calel33's V2 support probes the major version and keeps a V1 plugin as well. Its launch does not use --standalone, and its V2 plugin reports execution.* events for any session, with no root or child filter.",
+     "source": "Calel33 fork: git show origin/opencode-v2-support:server/clis.ts lines 190-205, 316-349, 505-575",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Calel33 says V2 ignores config `instructions` as behavioural rules. The V2 docs say configured instructions load after AGENTS.md.",
+     "source": "Calel33 3890248 commit message vs https://opencode.ai/v2/instructions.md (Configuration)",
+     "confidence": "unverified"
+    },
+    {
+     "claim": "francovp 625e1df's OpenCode CEO is OpenCode-1-only: it uses a --model flag, writeOpenCodeVariantState (a TUI model.json file), a V1 `chat.message` plugin hook, a prompt-ready screen regex, and a remote office MCP without oauth:false. Its effectiveModel change rejects Codex models that contain '/', which breaks #311's `ollama/...` for Codex.",
+     "source": "francovp fork: git show 625e1df -- server/clis.ts shared/models.ts",
+     "confidence": "verified"
+    },
+    {
+     "claim": "francovp 7685466 adds default_tools_approval_mode=\"approve\" to Codex's office MCP so a read-only Codex CEO can call office tools under --ask-for-approval never. 625e1df also adds CLI-neutral read-only CEO tools (list_directory, read_file, save_notes) with realpath containment.",
+     "source": "francovp fork: git show 7685466 and 625e1df -- server/ceo.ts",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The project CLAUDE.md SAFETY section says not to add hooks, permission rules or sandboxes that refuse tool calls, which conflicts with D-005.",
+     "source": "CLAUDE.md (SAFETY, 4th bullet) vs .ai-factory/ARCHITECTURE.md:97",
+     "confidence": "verified"
+    }
+   ],
+   "plan_items": [
+    {
+     "title": "OpenCode: require 2.x",
+     "scope": "Add a pure openCodeVersionProblem(version) that accepts '2.x.y' or 'opencode v2.x.y' and otherwise returns a message naming `npm i -g @opencode/cli`. Show it as CliView.problem in detectClis. Swarm refuses to hire, update or start an OpenCode agent while a problem is set, with an HttpError(400) or a visible session error. The client disables the OpenCode option with the reason. The demo fake stays installed with version 'demo' and no problem.",
+     "effort": "S",
+     "files": [
+      "server/clis.ts",
+      "shared/types.ts",
+      "server/swarm.ts",
+      "client/src/ui/AgentSettings.tsx",
+      "client/src/ui/Phone.tsx",
+      "server/clis.test.ts",
+      "README.md"
+     ],
+     "tests": "clis.test.ts covers '2.3.0', 'opencode v2.3.0' and '2.3.0-beta.1' (pass), and '1.19.5', 'garbage' and null (message). Add a swarm test that starting an OpenCode agent with a problem fails with that message.",
+     "depends_on": []
+    },
+    {
+     "title": "OpenCode 2: private server, model in config, V2 turn plugin",
+     "scope": "launchArgs('opencode') returns ['--standalone','--auto','--session',id,'--prompt',prompt], where id is resumeId or `ses_cubefarm<uuid>`, with no --model. Config is native V2: plugins [{ package: <plugin dir>, options: { sessionID, notifyUrl } }], instructions, permissions [allow-all base, question deny], model, mcp.servers.playwright with codemode:false. Drop autoupdate and CUBEFARM_NOTIFY_URL. Replace OPENCODE_PLUGIN_SOURCE with an import-free folder (package.json + index.js exporting { id:'cubefarm', setup }). setup subscribes to ctx.event and filters on options.sessionID. On execution.succeeded or idle (deduplicated) it posts TurnComplete with the last text from ctx.session.context. On execution.failed it posts TurnError; on execution.interrupted, Interrupt. It returns an abort cleanup. writeHelpers writes the folder. On state load, drop OpenCode resume IDs that are not `ses_cubefarm*`, so old V1 sessions start fresh visibly. Update docs/how-it-works.md and the README table.",
+     "effort": "M",
+     "files": [
+      "server/clis.ts",
+      "server/cliRunner.ts",
+      "server/swarm.ts",
+      "server/clis.test.ts",
+      "server/browser.test.ts",
+      "docs/how-it-works.md",
+      "README.md"
+     ],
+     "tests": "clis.test.ts: args include --standalone, --auto and --session ses_... and never --model; the parsed config has plugins[0].package as the directory and options.sessionID equal to the --session value, mcp.servers.playwright.codemode false, and a question deny. Plugin test: write the files to a temp dir, import index.js, and feed a fake ctx whose event.subscribe is an async generator, with fetch stubbed. Assert one TurnComplete per root turn (succeeded and idle together deduplicated), TurnError on execution.failed, Interrupt on execution.interrupted, other or child sessions ignored, and cleanup aborting the loop. browser.test.ts:69-70 moves to mcp.servers.playwright.",
+     "depends_on": []
+    },
+    {
+     "title": "OpenCode 2 local models (#311)",
+     "scope": "Rewrite opencodeLocal for V2. ollama and lmstudio use built-in discovery, so add nothing at the default address and only providers.<id>.settings.baseURL when CUBEFARM_<ID>_URL is set. llamacpp and omlx become providers.<id> { name, package: '@opencode/ai/providers/openai-compatible', settings: { baseURL }, models: { [model]: { name, capabilities: { tools: true } } } }. The model ref goes in the config `model` key. Update the docs table text.",
+     "effort": "S",
+     "files": [
+      "server/clis.ts",
+      "server/clis.test.ts",
+      "docs/agents.md",
+      "shared/models.ts"
+     ],
+     "tests": "Replace clis.test.ts:177-184. 'ollama/qwen3-coder' gives model 'ollama/qwen3-coder' and no providers. With CUBEFARM_OLLAMA_URL stubbed (vi.stubEnv), providers.ollama.settings.baseURL is set. 'llama.cpp/qwen/coder' gives the custom provider llamacpp with model key 'qwen/coder'. 'anthropic/claude-opus-5-5' gives no providers.",
+     "depends_on": [
+      "OpenCode 2: private server, model in config, V2 turn plugin"
+     ]
+    },
+    {
+     "title": "CEO on any CLI, part 1: Claude Code and Codex",
+     "scope": "Port the CLI-neutral parts of francovp 625e1df and 7685466. sessionRuntime and the CEO start honour the CEO's own cli (swarm.ts:2682, 4369); add nextSession; name office tools per CLI (mcp__office__x for Claude and Codex); add the read-only office tools list_directory, read_file and save_notes with realpath containment; give the Codex CEO --sandbox read-only, features.shell_tool=false and office MCP default_tools_approval_mode=approve; add the CEO CLI picker in the UI. An OpenCode CEO is refused with an actionable message until part 2. Fix effectiveModel so Codex accepts #311 local models (localModel(model) or no '/'). Add the demo fake for a Codex CEO.",
+     "effort": "M",
+     "files": [
+      "server/swarm.ts",
+      "server/ceo.ts",
+      "server/clis.ts",
+      "shared/models.ts",
+      "shared/types.ts",
+      "server/demo.ts",
+      "client/src/ui/ManagerConsole.tsx",
+      "client/src/ui/AgentSettings.tsx",
+      "server/ceo.test.ts",
+      "server/ceoRuntime.test.ts",
+      "server/clis.test.ts",
+      "shared/models.test.ts"
+     ],
+     "tests": "models.test.ts: effectiveModel('ollama/gpt-oss:20b', 'codex', ...) is kept and a Claude model is still dropped for Codex. ceo.test.ts: read_file refuses paths outside the roots, including through a symlink, and tool names are correct per CLI. clis.test.ts: Codex CEO args have no --dangerously-bypass and include the read-only sandbox. ceoRuntime: changing the CEO's CLI starts a fresh session.",
+     "depends_on": [
+      "OpenCode 2: private server, model in config, V2 turn plugin"
+     ]
+    },
+    {
+     "title": "CEO on OpenCode 2",
+     "scope": "For role 'ceo', the OpenCode config adds mcp.servers.office { type:'remote', url, oauth:false, codemode:false } and permissions denying edit, shell, subagent and question (read stays allowed). The CEO prompt names tools office_<tool>. Swarm allows the opencode CLI for the CEO. Update the ManagerConsole.tsx:666 copy and docs.",
+     "effort": "S",
+     "files": [
+      "server/clis.ts",
+      "server/cliRunner.ts",
+      "server/ceo.ts",
+      "server/swarm.ts",
+      "client/src/ui/ManagerConsole.tsx",
+      "docs/how-it-works.md",
+      "server/clis.test.ts",
+      "server/ceo.test.ts"
+     ],
+     "tests": "clis.test.ts: the CEO config has the office server with oauth false and codemode false, edit, shell and subagent are denied, and a worker config has no office server. ceo.test.ts: the OpenCode CEO prompt uses office_company_status.",
+     "depends_on": [
+      "CEO on any CLI, part 1: Claude Code and Codex",
+      "OpenCode 2 local models (#311)"
+     ]
+    },
+    {
+     "title": "Enforce office rules on OpenCode agents (D-005)",
+     "scope": "First resolve the CLAUDE.md SAFETY conflict with D-005 (owner decision). Then add a pure rule builder opencodeRules(role, task, defaultBranch). Workers get shell denies for `git push * <default>`, `git push * HEAD:<default>`, `git push --force*`, `git push -f*` and `gh pr merge *`. QA additionally gets shell denies for `git push *` and the GitHub writes (`gh pr comment *`, `gh pr review *`, `gh issue *`). The CEO has no shell. The plugin also registers permission.hook('evaluate') to deny a bare `git push` while on the default branch, which a pattern rule cannot see. LaunchContext gains task and defaultBranch.",
+     "effort": "M",
+     "files": [
+      "server/clis.ts",
+      "server/cliRunner.ts",
+      "server/swarm.ts",
+      "server/clis.test.ts",
+      "CLAUDE.md",
+      "docs/how-it-works.md"
+     ],
+     "tests": "Rule-builder table test per role and task, with a 'master' default branch case. Plugin test: the evaluate hook sets effect to deny for `git push` when the fake VCS reports the default branch, and leaves feature-branch pushes alone.",
+     "depends_on": [
+      "CEO on OpenCode 2"
+     ]
+    },
+    {
+     "title": "OpenCode 2: read CLAUDE.md when a repo has no AGENTS.md",
+     "scope": "V2 has no CLAUDE.md fallback. When the session cwd has CLAUDE.md and no AGENTS.md, add that path to the config `instructions`.",
+     "effort": "S",
+     "files": [
+      "server/clis.ts",
+      "server/cliRunner.ts",
+      "server/clis.test.ts"
+     ],
+     "tests": "With a temp dir holding only CLAUDE.md, instructions include it. With an AGENTS.md present, they do not.",
+     "depends_on": [
+      "OpenCode 2: private server, model in config, V2 turn plugin"
+     ]
+    },
+    {
+     "title": "Optional: OpenCode 2 steps and cost",
+     "scope": "The plugin forwards ctx.tool.hook('execute.before' and 'execute.after') as PreToolUse and PostToolUse (tool name and input). The cliRunner handlers already exist (cliRunner.ts:654-686). It sums session.step.ended cost into TurnComplete as cost_usd, and cliRunner adds that to costUsd. Do this when the manager wants step-level parity with Claude Code; until then the README keeps 'each finished turn'.",
+     "effort": "S",
+     "files": [
+      "server/clis.ts",
+      "server/cliRunner.ts",
+      "server/clis.test.ts",
+      "README.md"
+     ],
+     "tests": "Plugin test: execute.before posts PreToolUse with tool_name; two step.ended events with cost 0.01 and 0.02 give cost_usd 0.03 on TurnComplete.",
+     "depends_on": [
+      "OpenCode 2: private server, model in config, V2 turn plugin"
+     ]
+    }
+   ],
+   "open_risks": [
+    "No real OpenCode 2 was run (it is not installed here). The exact `--version` output, whether `--prompt` auto-submits on a new `--session` ID, and Windows behaviour (npm .cmd shim pointing at bin/opencode.exe, the standalone child server dying under taskkill /T) are only likely. Run one manual demo-free check against 2.3.0 before merging the V2 launch PR.",
+    "Repo-level opencode.json can weaken office enforcement: a later `allow` rule wins (last match), and a '-cubefarm' plugins entry disables the office plugin. Where OPENCODE_CONFIG_CONTENT sits in permission and policy precedence is undocumented. A disabled plugin also stops TurnComplete, so the office must treat a missing turn end as a visible failure.",
+    "The CLAUDE.md SAFETY section forbids hooks, permission rules or sandboxes that refuse tool calls, which conflicts with D-005. The owner has to decide which wins before the enforcement PR.",
+    "V2 changes fast (48 releases from 2.0.0 to 2.3.0 in about 9 weeks). session.idle is already deprecated, and event names or plugin APIs may move. Pin a tested minimum, re-check events on each bump, and rely on session.execution.* rather than session.idle.",
+    "V1 and V2 both install `opencode`, and opencode-ai 1.19.5 is still the `latest` of the V1 package, so managers may have V1 on PATH. The version check covers it; trying the `opencode2` bin name as a fallback is optional.",
+    "Persisted agents may hold V1 OpenCode session IDs. V2 `--session` silently creates a new empty session with an unknown ID, so drop non-`ses_cubefarm` OpenCode resume IDs on state load.",
+    "Calel33 claims V2 ignores config `instructions` as rules, which contradicts the V2 docs. Verify with a real run. If true, move the office instructions to agents.<id>.system.",
+    "Mapping reasoning effort to `#variant` (Calel33, francovp) is not verified on V2: variant IDs are model-specific and an unknown one may error. Leave effort unmapped for OpenCode until verified.",
+    "Cloud (Upstash Box) OpenCode agents stay unsupported (shared/cloud.ts:37). droidsembly f99c760 shows a V2 Box path, but D-003 keeps hosted work for later."
+   ]
+  },
+  "verification": {
+   "checked": [
+    {
+     "claim": "1. Latest OpenCode is 2.3.0 (@opencode/cli, 2026-11-13); 2.0.0 published 2026-09-11; 48 releases from 2.0.0 to 2.3.0.",
+     "verdict": "wrong",
+     "evidence": "https://registry.npmjs.org/@opencode/cli: dist-tags.latest=2.3.0, time['2.3.0']=2026-11-13T08:54:17Z, time['2.0.0']=2026-09-11T23:44:52Z, all correct. The count is wrong: there are 47 stable 2.x versions from 2.0.0 to 2.3.0 counting both ends (46 after 2.0.0). No 2.x version was unpublished: time keys = versions keys = 47. GitHub has only 9 v2 releases (v2.2.0 to v2.3.0) out of 897 releases. Neither source gives 48."
+    },
+    {
+     "claim": "2. GitHub release v2.3.0 of anomalyco/opencode was published 2026-11-13, default branch dev; the npm repository is anomalyco/opencode.",
+     "verdict": "holds",
+     "evidence": "api.github.com/repos/anomalyco/opencode: default_branch=dev. releases/tags/v2.3.0: published_at=2026-11-13T08:55:07Z, target_commitish=dev, tag commit a6b15d33daf6ab7d35569f6d711fdb630b9f04e7. Registry: repository.url=git+https://github.com/anomalyco/opencode.git, both top-level and on 2.3.0."
+    },
+    {
+     "claim": "3. V1 is still published as opencode-ai (latest 1.19.5, 2026-10-28); @opencode-ai/sdk and @opencode-ai/plugin are at 1.19.5.",
+     "verdict": "holds",
+     "evidence": "registry.npmjs.org/opencode-ai: latest=1.19.5 at 2026-10-28T06:17:11Z; no 2.x versions. @opencode-ai/sdk latest=1.19.5 (2026-10-28T06:18:05Z). @opencode-ai/plugin latest=1.19.5 (06:18:15Z). Note: the V2 packages @opencode/plugin, @opencode/sdk and @opencode/client also exist on npm at 2.3.0."
+    },
+    {
+     "claim": "4. @opencode/cli 2.3.0 has bins opencode and opencode2, both bin/opencode.exe, per-platform optionalDependencies including windows-x64/arm64, and a postinstall.",
+     "verdict": "holds",
+     "evidence": "versions['2.3.0'].bin={opencode:bin/opencode.exe, opencode2:bin/opencode.exe}. optionalDependencies cover 12 platform packages, including @opencode/cli-windows-x64, -windows-arm64 and -windows-x64-baseline. scripts.postinstall='node ./postinstall.mjs'."
+    },
+    {
+     "claim": "5. V2 installs via npm @opencode/cli, curl https://opencode.ai/v2/install, or brew anomalyco/tap/opencode-v2; Windows package managers are not supported; Windows zips exist; a package-managed V1 must be removed first.",
+     "verdict": "holds",
+     "evidence": "https://opencode.ai/v2/index.md (now a 301 to /docs/index.md) lines 12-14 list curl, brew and npm, plus bun, pnpm, yarn, vite+, aur and mise (mise >= 2026.10.9). Line 28: 'Windows package managers are not supported.' Line 34 links Windows ARM64, x64 and x64-baseline zips. migrate-v1.md lines 3-4: both versions use `opencode`; remove a package-managed V1 first; the curl installer replaces the V1 binary. On Windows the only practical package route is npm, since curl|bash and brew do not apply there."
+    },
+    {
+     "claim": "6. OpenCode is not installed on this machine.",
+     "verdict": "holds",
+     "evidence": "Re-ran: `where opencode` printed 'Could not find files for the given pattern(s)'. `which opencode opencode2` found neither. No ~/.opencode or ~/.config/opencode directory."
+    },
+    {
+     "claim": "7. The V2 root TUI accepts --standalone, --server, --auto, a directory argument, --continue/-c, --session/-s ('...or to create if it does not exist') and --prompt, and has no --model.",
+     "verdict": "holds",
+     "evidence": "packages/cli/src/commands/commands.ts@v2.3.0: lines 14-26 define Standalone and Server. Lines 37-47 define --auto (plus hidden --yolo and --dangerously-skip-permissions). Root spec at 49-69 has directory, continue/c, session/s with that exact description (line 65) and prompt. It has no model param. Caveat: in v2.0.0 through v2.0.18, --session reads only 'Session ID to continue'. Create-if-missing first appears in v2.0.19 (2026-09-29), checked against the raw commands.ts at tags v2.0.0, v2.0.16, v2.0.18, v2.0.19 and v2.0.20."
+    },
+    {
+     "claim": "8. `opencode run` accepts --model provider/model#variant, --agent, --format json, --session, --continue, --fork, --file, --title, --archived, --thinking, --auto, --standalone, --server; `opencode mini` accepts --model, --prompt, --session.",
+     "verdict": "holds",
+     "evidence": "commands.ts:400-451 (run): message (positional), continue, session, fork, worktree, model ('provider/model#variant', line 428), agent, format default|json, file, title, archived, thinking, then ...PermissionParams (auto). It inherits globalFlags ServerFlags (standalone, server) at line 402. Lines 364-399 (mini): continue, session, fork, replay, replay-limit, model ('provider/model', no #variant, line 392), agent, prompt."
+    },
+    {
+     "claim": "9. In V2 the TUI model comes from config (top-level `model` or agents.<id>.model) in the form provider/model#variant; a fork saw --model on the 2.1.3 TUI exit at once with ShowHelp.",
+     "verdict": "wrong",
+     "evidence": "Partly wrong. The top-level `model` does not keep a #variant. https://opencode.ai/docs/config.md 'Model': 'The root default currently does not retain a `#variant`; agent and command model references can select one.' models.md line 54 says the same. Only agents.<id>.model takes provider/model#variant (migrate-v1.md 'Agents and modes'). models.md also says 'A model already selected for a session takes precedence over the configured default', so a changed config model does not reach a resumed session. The fork part holds: mysteryreloaded 8dc1d0cb (2026-11-05): 'opencode 2.1.3 has no --model flag; passing one makes its CLI parser die within milliseconds with a ShowHelp error'."
+    },
+    {
+     "claim": "10. By default every V2 client connects to one shared background server per user that owns sessions, config, permissions and tool execution; --standalone runs a private server.",
+     "verdict": "holds",
+     "evidence": "https://opencode.ai/docs/cli.md 'Background service': 'one shared background server for your user account ... owns sessions, configuration, integrations, permissions, and tool execution'. packages/cli/src/commands/handlers/default.ts:35-52 calls ServerConnection.resolve({server, standalone, mismatch: 'replace'}). This is why OPENCODE_CONFIG_CONTENT and plugin options only take effect with --standalone: the env var is read by the server process (packages/cli/src/server-process.ts:133)."
+    },
+    {
+     "claim": "11. The standalone server is spawned as a child with `--stdio --port 0` and a random OPENCODE_PASSWORD.",
+     "verdict": "holds",
+     "evidence": "packages/cli/src/services/standalone.ts:17-33: ChildProcess.make(executable, [...args ('serve'), '--stdio', '--port', '0']), env {OPENCODE_PASSWORD: password}, extendEnv: true, stdin pipe as the ownership lease. Line 37: password = randomBytes(32).toString('base64url'). Because extendEnv is true, the TUI's env (OPENCODE_CONFIG_CONTENT) reaches the private server. Note cwd is startupDirectory, captured at module load (line 15)."
+    },
+    {
+     "claim": "12. A --session ID that does not exist becomes the ID of the session the first prompt creates; IDs only need to start with 'ses'.",
+     "verdict": "holds",
+     "evidence": "default.ts:53-61 and 114-118: findSession, then sessionID or newSessionID. packages/tui/src/context/args.tsx:18-28 (takeNewSessionID) and packages/tui/src/component/prompt/index.tsx:1233-1244 create the session with id: newSessionID. packages/cli/src/session-target.ts:161-166 looks the session up by exact ID; SessionNotFoundError maps to undefined. packages/schema/src/session-id.ts:5 is Schema.String.check(isStartingWith('ses')). Protocol session.create takes id: Session.ID optional (packages/protocol/src/groups/session.ts:167-169). Only true from v2.0.19 on (see claim 7)."
+    },
+    {
+     "claim": "13. The TUI opens a resumed --session with the --prompt text as its startup prompt.",
+     "verdict": "holds",
+     "evidence": "packages/tui/src/app.tsx:663-684 builds startupPrompt from args.prompt and route.navigate({type:'session', sessionID, prompt: startupPrompt}). It is also auto-submitted once model and agent are ready: packages/tui/src/routes/session/index.tsx:625-632. The new-session case is in routes/home.tsx:68-79."
+    },
+    {
+     "claim": "14. V2 still loads OPENCODE_CONFIG_CONTENT as an inline config document.",
+     "verdict": "holds",
+     "evidence": "packages/core/src/config.ts:291-303 parses options.content as a virtual source labelled 'OPENCODE_CONFIG_CONTENT' with variable substitution. packages/cli/src/server-process.ts:133 sets content: process.env.OPENCODE_CONFIG_CONTENT. Load order at config.ts:367-377 puts content after project files and before managed settings. The V2 docs do not mention this env var (grep over the fetched docs pages), so it is an undocumented contract."
+    },
+    {
+     "claim": "15. V2 accepts most V1 config fields and normalizes them in memory; the intended breaking changes are only plugins, the server API, and tui.json to cli.json.",
+     "verdict": "holds",
+     "evidence": "https://opencode.ai/docs/migrate-v1.md lines 6-21 ('V2 has three intentional breaking changes'), and 'Use your existing configuration' ('normalizes supported V1 and native V2 fields in memory'). Behavioural defaults still changed: external_directory is allowed by default and todos are off (same page, 'Permissions and tools')."
+    },
+    {
+     "claim": "16. The plugin key is `plugins` (string or {package, options}); local paths must be directories, single files are skipped; '-<id>' disables.",
+     "verdict": "holds",
+     "evidence": "https://opencode.ai/docs/plugins.md 'Configure' (example and 'Configured local paths must be directories. A path to a single file is skipped.') and 'Control' (prefix '-' to disable; a later ID re-enables). build/plugins.md 'Load': a local directory uses package.json name/exports, else server|index.(ts|tsx|js). Plugin arrays from all config layers are applied lowest to highest precedence."
+    },
+    {
+     "claim": "17. A V2 server plugin is a default export {id, setup(ctx)}; Plugin.define is identity so an import-free object works; setup may return cleanup; ctx.options holds options.",
+     "verdict": "holds",
+     "evidence": "packages/plugin/src/promise/plugin.ts:30 (options: PluginOptions), 62-67 (Cleanup, Plugin {id, setup}), 69-71 (define returns its argument). docs build/plugins/server.md 'Lifecycle' and 'Options'. That an import-free object loads is an inference; droidsembly (server/clis.ts:501-504) and mysteryreloaded (625cee78) ship one, not run here. Per mysteryreloaded 625cee78, setup is awaited, so the event loop must run in the background (fork note, unverified)."
+    },
+    {
+     "claim": "18. Plugins get events via ctx.event.subscribe() with `data`; session.created (parentID), session.status, session.idle (deprecated), session.execution.started/succeeded/failed(error)/interrupted(reason), session.text.ended(text), session.tool.called/success/failed, session.step.ended and session.usage.updated (cost, tokens).",
+     "verdict": "holds",
+     "evidence": "packages/schema/src/session-event.ts:39-57 (Created.parentID), 172-180 (UsageUpdated cost/tokens), 243-263 (Execution.*: Failed.error, Interrupted.reason in user|shutdown|superseded|inactivity), 372-381 (step.ended cost/tokens), 432-438 (text.ended text), 524/547/568 (tool events), all in Definitions at 665-709. session-status-event.ts:35-51 (status idle|busy|retry; Idle marked '// deprecated'). event-manifest.ts:41-52 and 72-83: SessionEvent is in ServerDefinitions. packages/schema/src/event.ts:71 (data). Docs server.md line 1337 (ctx.event.subscribe)."
+    },
+    {
+     "claim": "19. session.error is not on the V2 public event stream.",
+     "verdict": "holds",
+     "evidence": "The conclusion holds, but the cited evidence is incomplete. session.error IS defined as a V1 legacy public event in packages/schema/src/v1/session.ts:642-648 (SessionV1.Event.Definitions; packages/schema/test/legacy-event.test.ts:9-20). That inventory is not in EventManifest.ServerDefinitions (event-manifest.ts:72-83). The public stream type is OpenCodeEvent = make(EventManifest.ServerDefinitions) (packages/protocol/src/groups/event.ts:80-86), and packages/server/src/event-feed.ts:49 drops anything outside it. So mysteryreloaded's 625cee78 note that 'session.error still reports a failed turn' is dead code; use session.execution.failed."
+    },
+    {
+     "claim": "20. Plugin hooks include tool execute.before/after, permission evaluate (may set deny; a configured deny is final), shell create.before, and session hooks for prompt, context and model.request.",
+     "verdict": "holds",
+     "evidence": "https://opencode.ai/docs/build/plugins/server.md: permission.hook('evaluate') with rules 'Hooks run for allow and ask decisions', 'An explicit configured deny is final and does not invoke the hook', 'A hook may change effect to allow, ask, or deny'. Also shell.hook('create.before'), tool.hook('execute.before'|'execute.after'), and session.hook 'prompt', 'context', 'model.request'. packages/plugin/src/promise/permission.ts has 'evaluate' at every tag checked (v2.0.0 to v2.3.0)."
+    },
+    {
+     "claim": "21. MCP config is mcp.servers.<name>; local {type, command[], cwd, environment, disabled, codemode, timeout}; remote {type, url, headers, oauth (false disables; OAuth default), disabled, codemode}; enabled became disabled; Code Mode on by default; tools named <server>_<tool>.",
+     "verdict": "holds",
+     "evidence": "https://opencode.ai/docs/mcp-servers.md 'Config', 'Local' and 'Remote' field tables (both tables also list protocol and pool), 'OAuth' ('enabled for remote servers unless oauth is false'), 'Names' and 'Permissions' (Code Mode default; codemode:false exposes tools natively). migrate-v1.md 'MCP servers' (enabled becomes the inverse disabled; timeout splits into catalog/execution). A higher-precedence config replaces a same-named server object whole."
+    },
+    {
+     "claim": "22. Permissions are an ordered `permissions` array of {action, resource, effect}, last match wins, no match means ask; actions include read, edit, glob, grep, shell, subagent, skill, question, webfetch, websearch, external_directory, <server>_<tool>; per-agent rules in agents.<id>.permissions; a scanner covers Bash, sh and PowerShell.",
+     "verdict": "holds",
+     "evidence": "https://opencode.ai/docs/permissions.md: 'Configure', 'Rules' ('If no rule matches, OpenCode uses ask'), 'Matching' (last match; agent rules appended last), 'Actions' table (also lists execute, experimental_image_generate and MCP resource actions), 'Agents', and 'Scanner' (Bash, Zsh, POSIX sh, PowerShell; cmd.exe not listed). The same page warns that shell directory inference is best effort: 'prefer a narrow shell allowlist instead of patterns intended to recognize every dangerous command'."
+    },
+    {
+     "claim": "23. --auto auto-approves permissions not explicitly denied; the default base policy allows everything except .env reads (ask); external_directory is allowed by default.",
+     "verdict": "holds",
+     "evidence": "commands.ts:38-40 ('Auto-approve permissions that are not explicitly denied'). default.ts:119 also maps --yolo and --dangerously-skip-permissions to auto. permissions.md 'Defaults' base policy (allow *, ask *.env and *.env.*, allow *.env.example) and 'Directories'. migrate-v1.md warning callout under 'Permissions and tools'."
+    },
+    {
+     "claim": "24. Policies only tighten and override ask decisions and saved approvals; precedence is documented for managed, system, Console, global and project files, not for OPENCODE_CONFIG_CONTENT.",
+     "verdict": "holds",
+     "evidence": "https://opencode.ai/docs/policies.md 'Tools' (applies after agent rules and saved approvals; allow only lifts an earlier deny) and the 'Precedence' table (6 authorities, no env/inline source). Inference from code (not tested): config.ts:305-308 says policies evaluate in reverse load order, and 367-377 load content after project files. So inline policies would be evaluated first, at the lowest authority, and a repo's own policy statement could lift an office deny or deny the office plugin via plugin.use."
+    },
+    {
+     "claim": "25. The V2 updater reads its policy only from global config.json/opencode.json/opencode.jsonc, defaulting to 'notify'; autoupdate:false in OPENCODE_CONFIG_CONTENT has no effect.",
+     "verdict": "holds",
+     "evidence": "packages/cli/src/services/updater.ts:127-142 (decodePolicy: `update` disable|notify|auto, legacy autoupdate false/notify/true) and 198-206 (reads the three files under global.config, findLast ?? 'notify'). https://opencode.ai/docs/config.md 'Updates': 'Project-level values are ignored.' default.ts:69-86: the TUI runs the updater every 10 minutes. Upstream 157efde server/clis.ts still sets autoupdate:false inline, which is a no-op on V2."
+    }
+   ],
+   "recommendation_still_holds": true,
+   "corrections": "The recommendation holds: a V2-only hand-port with droidsembly as the design reference, in small PRs, with OpenCode 2 landing before CEO-on-any-CLI. francovp's OpenCode CEO code is V1-shaped: 625e1df uses mcp.office {enabled:true}, --model and a written model.json. Of the 25 claims, two are wrong. Claim 1: 47 stable releases, not 48. Claim 9: the root `model` drops #variant. Claim 19's conclusion holds, but its evidence missed packages/schema/src/v1/session.ts:642-648. Changes needed:\n\n1. Step 1, version floor. \"Below 2.x\" is too loose. `--session` create-if-missing first appears in v2.0.19 (commands.ts at tags v2.0.18 and v2.0.19), so 2.0.0 to 2.0.18 would break office-assigned ses_ IDs. Policy semantics also changed inside 2.x (policies.md: integration.use changed in 2.2.3, websearch.use needs 2.2.6). Set the floor at the version you test by hand and warn on untested newer versions. Releases come about 5 a week (47 in 63 days), so 2.3.0 will be stale by merge; test the then-latest. The Windows install hint has to remove V1 first: `npm uninstall -g opencode-ai`, then `npm install -g @opencode/cli`, or the standalone zip. curl|bash and brew do not apply on Windows.\n\n2. Step 2, model and resume. Do not put a #variant on the root `model`. Use an office-owned primary agent (`default_agent` plus `agents.<id>.model`), as droidsembly does (server/clis.ts:333-340), and keep that agent ID stable across releases. Handle resume explicitly, because a session's selected model beats config (models.md). Ship the plugin as a directory (index.js plus package.json); a bare file is skipped. Use session.execution.succeeded/failed/interrupted; treat session.idle as deprecated and drop session.error (it is not on the stream). Note that the private server inherits the TUI's env (standalone.ts:24-25), so plugin options are a choice, not a necessity.\n\n3. Step 3 is consistent with models.md 'Local'. Give the llama.cpp and oMLX custom providers explicit model entries with capabilities.tools:true. Use providers.<id>.settings.baseURL for non-default Ollama and LM Studio addresses.\n\n4. Step 5, CEO. Do not deny `edit` outright. The CEO must update its notes file (server/ceo.ts:274: 'Keep durable notes about the company in ${o.notesFile}'). Use edit deny `*`, then allow the notes path (last match wins).\n\n5. Step 6, D-005.\n   - The CLAUDE.md conflict is already decided. The user wrote that hooks and sandboxes are needed, and the working-tree CLAUDE.md is already edited (uncommitted, 'VisualFactory decision (2026-11-14)'). Commit that edit; there is no open question left.\n   - Put the deny rules in the office agent's agents.<id>.permissions. Agent rules are appended last, so a repo's own agent rules cannot outrank them.\n   - Keep the permission.hook('evaluate') plugin as the backstop. It runs on allow and ask decisions, including under --auto.\n   - Do not rely on `policies` inside OPENCODE_CONFIG_CONTENT. By config.ts load order they are lowest authority (inference, untested), and a repo's plugin.use deny could unload the office plugin. Detect a missing plugin (no events) and fail visibly.\n   - Shell deny patterns are best effort (permissions.md). Also deny `gh pr merge *` and `gh api` merge calls. Real 'no push to default branch / no merge' enforcement needs GitHub branch protection or scoped credentials, outside OpenCode.\n\n6. Manual Windows test checklist (none of this could be verified):\n   - a file:// plugin directory URL with a drive letter;\n   - the V2 TUI under node-pty/ConPTY;\n   - the standalone server child dying with taskkill /T;\n   - which shell V2 uses on Windows (server-process.ts:136 reads OPENCODE_GIT_BASH_PATH) and whether the scanner covers it;\n   - one private server per agent at big-company scale.\n\n7. Size target. mysteryreloaded's port is about 340 changed lines over 4 commits because it keeps V1 config keys that V2 normalizes in memory. A native V2 config plus removing the V1 paths will be larger. Accept that, or keep V1-shaped config keys to stay small; D-001 does not require native keys.\n\nDownloaded sources and docs used: C:/Users/peti/AppData/Local/Temp/claude/c968d675ef2f985c/23326b94-69a1-40d9-887d-ac86b5b528d8/scratchpad/skeptic-oc2/ (src/ holds files at tag v2.3.0 = a6b15d33; docs/ holds the opencode.ai/docs pages, to which /v2/*.md now 301-redirect)."
+  }
+ },
+ "enforcement": {
+  "research": {
+   "summary": "Upstream enforces nothing. It approves every tool call on every CLI, and the office rules exist only in prompts:\n- Claude Code: the PreToolUse hook always answers allow (server/cliRunner.ts:188-189, returned at :446 and :667), the sessions run in acceptEdits mode (server/clis.ts:252-253), and the SDK's canUseTool is allowAll (server/agentRunner.ts:126,367-368).\n- Codex runs with --dangerously-bypass-approvals-and-sandbox (server/clis.ts:282-284). Its hook script always prints {} (server/clis.ts:433-441), and the office answers the \"Hooks need review\" prompt with \"Continue without trusting\" (server/cliRunner.ts:912-924).\n- OpenCode gets edit, bash and webfetch all set to allow, plus --auto (server/clis.ts:294,301).\n- Cloud Box agents get the same local allow answer (server/boxHelpers.ts:56-57).\n- The CEO is the one exception: Bash, PowerShell and NotebookEdit are disallowed for it (server/clis.ts:246, server/agentRunner.ts:347-348). It is still allowed Write and Edit inside the clones.\n\nWhat the current CLIs offer for enforcement:\n- Claude Code: PreToolUse hook decisions (allow, deny, ask, defer) and settings deny rules that a hook cannot override. --settings ranks above the repository's own settings. Its OS sandbox does not run on native Windows and covers only shell commands. HTTP hooks fail open unless onFailure:\"block\" is set, which needs v2.1.295. The SDK installed in this checkout bundles 2.1.283.\n- Codex 0.166: PreToolUse deny works for shell, exec_command, apply_patch and MCP tools. Hooks the manager has not trusted are skipped unless --dangerously-bypass-hook-trust is passed.\n  - workspace-write makes .git read-only, so commits fail, and it turns the network off by default.\n  - The Windows sandbox has three implementations:\n    - MXC: needs Windows 11 24H2. This office runs Windows 10 19045.\n    - elevated: needs admin setup.\n    - unelevated: weaker network isolation.\n- OpenCode 2: a `permissions` array of {action, resource, effect} where the last match wins, per-agent overrides, and policies (`tool.use`) that a repository cannot loosen. Its plugins can deny through permission.hook(\"evaluate\"). It has no OS sandbox.\n\nReference forks:\n- localloop-pro enforced-git-safety has the right pieces: PreToolUse deny, a Codex hook that passes the office's decision back, an OpenCode deny map and a pre-push hook. But it has two overlapping regex implementations, uses the OpenCode V1 config shape, and its per-worktree core.hooksPath turns off the repository's own git hooks.\n- francovp ceo-any-cli has a working read-only CEO for each CLI. Codex: --sandbox read-only, -a never, shell_tool off, office MCP approve. OpenCode: edit, bash and task denied.\n\nThe recommended design stacks five layers:\n1. A pure policy core.\n2. Static rules in each CLI.\n3. The office's decision hook in each CLI.\n4. A guard that works the same for every CLI: a pre-push hook installed through GIT_CONFIG_COUNT, which chains the repository's own hooks, plus withholding GitHub and git credentials from QA, reviewers, analysis tasks and the CEO.\n5. A check that warns when the default branch has no GitHub ruleset.\n\nOS sandboxes are used only where they don't break the role: Codex read-only sandbox for reviewers, analysis tasks and the CEO.",
+   "recommendation": "Use option C, layered enforcement. Use one pure policy and one small adapter per CLI. Add a git guard and credential withholding that work for every CLI. Use sandboxes only where they fit Windows and the role. Ship it as the small PRs in the plan, in order P0, P1, P2, P5, P4, P3, then P6 once the OpenCode 2 migration (D-001) has landed. P7 is optional.\n\nRules kinds (RulesKind):\n- builder: the developer and the fixer (legacy tasks issue and fix inside cubefarm.development, ADR-007).\n- tester: QA.\n- read-only: the independent reviewer (artifact.review) and the analysis task (ai.task).\n- ceo.\n\nEach session's kind comes from rulesFor(role, task). Workflow executors pass `rules` explicitly.\n\nPolicy matrix (what each kind may not do, and how each CLI enforces it):\n\nbuilder: no push to the default branch, no force push, no remote branch deletion, no --no-verify, no `-c core.hooksPath`, no gh pr merge or merge endpoints through gh api, no gh pr review, and no file-tool writes outside the worktree and the machine temp folder.\n- Claude Code: acceptEdits, plus the office's PreToolUse deny on both runtimes (terminal and SDK hooks.PreToolUse; canUseTool alone is skipped when someone's allow rules approve the call). --settings adds permissions.deny for both the Bash() and PowerShell() forms, and disableAllHooks:false so a repository cannot switch the office's hooks off. After P3: onFailure:\"block\" on PreToolUse and blockWritesOutsideWorkingDirectories.\n- Codex: keep bypass mode. workspace-write makes .git read-only, so commits would fail. Add the office hook with --dangerously-bypass-hook-trust, and check apply_patch paths in the hook.\n- OpenCode 2: a permissions array (shell denies, external_directory deny), plus a plugin evaluate hook that asks the office.\n- Every CLI: the pre-push guard.\n- Prompt-only: shell writes outside the worktree, network, running gh by its full path or from a script, pushing to another agent's branch, and a fixer opening a new PR.\n\ntester: no git commit or push, no GitHub writes, and nothing on GitHub at all, since the office posts QA's report (server/prompts.ts:123).\n- Every CLI: credentials withheld. GH_CONFIG_DIR points to an empty office folder, GH_TOKEN and GITHUB_TOKEN are removed, credential.helper is reset through GIT_CONFIG_COUNT, and GIT_TERMINAL_PROMPT=0.\n- Every CLI: commit, push and gh write denials through the same hook and rules as builder.\n- Codex: stays in bypass mode with hooks. On Windows, MXC stops detached dev servers and the legacy sandboxes need admin setup. A workspace-write option with network on can come later for macOS and Linux.\n- Prompt-only: editing the code under test. Writing probe files is allowed, and the next task's reset --hard discards them.\n\nread-only: no file-tool writes outside the machine temp folder, no git writes, no GitHub writes, credentials withheld.\n- Claude Code: hook plus deny rules. Bash stays, with git and gh write denials, because there is no sandbox on native Windows.\n- Codex: --sandbox read-only -a never instead of bypass, plus hooks.\n- OpenCode 2: edit denied except the temp folder, shell denies, plugin.\n\nceo: no shell, writes only to its notes file, actions only through office MCP tools, credentials withheld.\n- Claude Code: today's disallowed tools, plus a hook that limits Write and Edit to the notes file.\n- Codex and OpenCode: francovp's flags, after the ceo-any-cli cherry-pick. Codex: read-only sandbox, -a never, shell_tool off, office MCP approve. OpenCode: edit, shell and subagent denied, with notes saved through the office's save_notes tool.\n\nNetwork: prompt-only for every kind on Windows. The exception is a Codex read-only sandbox, where one runs.\n\nGit guard, the same for every CLI:\n- An office-owned hooks folder (<SWARM_HOME>/bin/git-hooks) is set with GIT_CONFIG_COUNT in the session environment. That ranks above every config file, so husky's local core.hooksPath cannot remove it. Only `git -c` can, and the hook layer denies that.\n- The pre-push hook refuses the default branch, deletions and non-fast-forward pushes, then runs the repository's own pre-push.\n- Stub hooks for the other standard hook names only pass through to the repository's own hooks, so lint-staged and similar keep working.\n- Each stub repeats the guard's stdin to the repository's hook. On Windows, Git for Windows' sh runs the hooks. Write them with LF line endings and chmod 0755 for macOS and Linux.\n\nThe only real server-side control is a GitHub ruleset on the default branch. Agents use the manager's own gh login, so nothing on GitHub can tell an agent's merge from the manager's.\n\nReuse from the forks:\n- localloop-pro (859b859): the deny list, the pre-push logic and the Codex hook script change. Rewrite them as one tokenizer instead of the two regex copies, use the V2 OpenCode shape, and chain the repository's hooks instead of replacing them.\n- francovp ceo-any-cli (625e1df and 7685466, plus the required fix so Codex local models still work): the CEO flags for each CLI.\n\nAlso update CLAUDE.md, AGENTS.md and how-it-works.md (P0): their \"rules live in prompts, not enforcement\" rule now contradicts D-005.",
+   "options": [
+    {
+     "name": "A. Keep prompt-only rules (upstream status quo)",
+     "pros": "Nothing to change and no false denials. Upstream syncs stay trivial.",
+     "cons": "Rejected by D-005. Nothing stops an agent pushing to the default branch, merging, or QA committing. Prompts are the only safeguard."
+    },
+    {
+     "name": "B. Port localloop-pro enforced-git-safety as it is",
+     "pros": "Already written and tested. It covers Claude PreToolUse deny, the Codex hook decision, an OpenCode deny map and a pre-push hook. About 420 lines.",
+     "cons": "Two overlapping regex implementations (blockedCommand and checkAgentShellCommand). It uses the OpenCode V1 config shape, which D-001 drops. Its per-worktree core.hooksPath turns off the repository's own hooks and is undone by husky. It has no read-only kind for reviewers or analysis tasks, no credential withholding and no fail-closed handling. Codex hooks still need the manager to trust them."
+    },
+    {
+     "name": "C. Layered: pure policy, CLI rules and hooks, git guard and credential withholding, sandboxes only where they fit (recommended)",
+     "pros": "One tested pure decision function serves all three CLIs and both Claude runtimes. Static deny rules still hold when the office's hook fails. The pre-push guard and withheld credentials work whatever the CLI, without parsing shell commands. Read-only roles get an OS sandbox on Codex. It works on Windows first.",
+     "cons": "Several small PRs touch cliRunner.ts and clis.ts, which upstream changes often. On a single OS user it is still not a security boundary against a determined agent. Codex needs --dangerously-bypass-hook-trust. Fail-closed for Claude needs an SDK bump. The OpenCode parts wait for the 2.x migration."
+    },
+    {
+     "name": "D. OS sandboxes first (Claude sandbox and Codex workspace-write for every role)",
+     "pros": "Strongest on macOS and Linux: file-write and network isolation that does not depend on reading command text.",
+     "cons": "Fails Windows first. Claude's sandbox does not run on native Windows. Codex workspace-write makes .git read-only (commits fail) and turns the network off (npm install fails). MXC needs Windows 11 24H2 and stops detached dev servers. The legacy elevated sandbox needs admin setup. OpenCode has no sandbox."
+    },
+    {
+     "name": "E. GitHub-side only (rulesets, plus a separate token per agent)",
+     "pros": "A real server-side control that no local trick can get around.",
+     "cons": "The local single-user mode (D-003) runs agents on the manager's own gh login, so a merge by an agent looks the same as one by the manager. Separate bot tokens are hosted-mode work. A ruleset requiring reviews would also block the office's own merge. Keep it only as the warning check in P7."
+    }
+   ],
+   "facts": [
+    {
+     "claim": "Upstream's Claude Code terminal runtime approves every tool call: ALLOW is a constant PreToolUse allow, returned for the active session and for a CLI idle at its prompt, subagent calls included.",
+     "source": "server/cliRunner.ts:188-189, :445-446, :654-667",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The comment in clis.ts says the PreToolUse hook may 'deny with an office rule', but no deny path exists anywhere in server/.",
+     "source": "server/clis.ts:251; grep for deny in server/*.ts finds only that comment",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Claude Code is started with --permission-mode acceptEdits, --settings (the office's HTTP hooks, timeout 120 s through the keeper, else 30 s) and --disallowedTools. The disallowed list is AskUserQuestion, EnterPlanMode, ExitPlanMode and the cross-turn tools, plus Bash, PowerShell and NotebookEdit for the CEO.",
+     "source": "server/clis.ts:246-264; server/cliRunner.ts:841-852",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Codex runs with --dangerously-bypass-approvals-and-sandbox because its sandbox cannot reach the credential store, so git and gh fail inside it. Its hook script always prints {}.",
+     "source": "server/clis.ts:280-284, :433-441",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The office answers Codex's 'Hooks need review' prompt with 'Continue without trusting', so Codex's hooks run only after the manager trusts them in /hooks.",
+     "source": "server/clis.ts:364-368; server/cliRunner.ts:912-924",
+     "confidence": "verified"
+    },
+    {
+     "claim": "OpenCode gets the V1 config permission {edit:'allow', bash:'allow', webfetch:'allow'} plus the --auto flag, with the config passed through OPENCODE_CONFIG_CONTENT.",
+     "source": "server/clis.ts:289-306",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The Agent SDK runtime approves everything (canUseTool allowAll, permissionMode acceptEdits) and loads user, project and local settings, so someone's allow rules can approve a call before canUseTool is ever asked.",
+     "source": "server/agentRunner.ts:124-126, :358, :367-368",
+     "confidence": "verified"
+    },
+    {
+     "claim": "A cloud agent's Box hook answers PreToolUse with allow locally, without asking the office.",
+     "source": "server/boxHelpers.ts:56-57",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The office rules exist only as prompt text. CLAUDE.md in this checkout tells agents not to add hooks, permission rules or sandboxes that refuse tool calls.",
+     "source": "server/prompts.ts:92 (developer rules), :123 (QA rules); CLAUDE.md:34-35",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The QA prompt never asks QA to use gh. The office posts QA's report, so withholding GitHub credentials from QA costs it nothing.",
+     "source": "server/prompts.ts:99-125",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The CEO is always Claude Code upstream.",
+     "source": "shared/types.ts:177; server/swarm.ts ensureCeo (cli: 'claude', ~line 4208)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Sessions receive role, task and the machine's environment, but not the floor's default branch.",
+     "source": "server/swarm.ts:2984-2995; server/agentRunner.ts:16-49",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Each local agent has its own clone (machines/<m>/repos/<owner>__<repo>) and worktree (machines/<m>/work/...). A machine's environment is only TMP, TEMP and TMPDIR.",
+     "source": "server/workspace.ts:817-851; server/machines.ts:42-46",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The office's own merge uses gh pr merge with --match-head-commit.",
+     "source": "server/github.ts:206-208",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The installed Agent SDK is 0.3.283 and bundles Claude Code 2.1.283. On this machine: claude 2.1.316, codex-cli 0.166.0, gh 2.103.3, git 2.33.0.windows.2, opencode not installed, Windows 10 build 19045.",
+     "source": "node_modules/@anthropic-ai/claude-agent-sdk/package.json:3,91; package.json:50; --version output; environment",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Claude Code PreToolUse decisions are allow, deny, ask or defer. A deny reason is shown to Claude. defer needs -p. Deny and ask rules are still evaluated whatever the hook returns.",
+     "source": "https://code.claude.com/docs/en/hooks (PreToolUse decision control)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Claude Code HTTP hooks fail open by default: a timeout or failure lets the call continue through the normal permission flow. onFailure:\"block\" makes them fail closed and needs v2.1.295 or later.",
+     "source": "https://code.claude.com/docs/en/hooks (HTTP hooks)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Claude Code permission rules are evaluated deny, then ask, then allow. A PreToolUse hook's allow cannot get past a deny rule, and lists merge across scopes.",
+     "source": "https://code.claude.com/docs/en/permissions (Precedence among rules, hooks, and mods; Settings precedence)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Claude Code Bash rules split compound commands, but the docs say they are not a security boundary: Bash(git push *) does not stop 'git -C . push origin main' or 'git -c ... push'. PowerShell rules have the same shape and are checked on the parsed command.",
+     "source": "https://code.claude.com/docs/en/permissions (What a Bash rule doesn't match; PowerShell)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Claude Code's dontAsk mode denies any call that would otherwise prompt.",
+     "source": "https://code.claude.com/docs/en/permissions (Permission modes); claude --help 2.1.316",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Claude Code's --settings ranks above the user, project and local settings files and below managed settings.",
+     "source": "https://code.claude.com/docs/en/settings (Settings precedence)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "disableAllHooks can be set from any settings file, so a repository's .claude/settings.json could turn the office's hooks off unless the office's --settings pins it to false.",
+     "source": "https://code.claude.com/docs/en/settings-reference (index); https://code.claude.com/docs/en/permissions (Before you run claude -p)",
+     "confidence": "likely"
+    },
+    {
+     "claim": "permissions.blockWritesOutsideWorkingDirectories makes Write, Edit and NotebookEdit refuse paths outside the working directories. It needs v2.1.314.",
+     "source": "https://code.claude.com/docs/en/settings (Exceptions to managed settings precedence); settings-reference index",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Claude Code's sandbox runs on macOS, Linux and WSL2. On native Windows commands run unsandboxed, and failIfUnavailable makes it exit instead. The sandbox covers shell commands only, not the file tools, MCP servers or hooks.",
+     "source": "https://code.claude.com/docs/en/sandboxing",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Codex 0.166 offers -s read-only|workspace-write|danger-full-access, -a on-request|never, --dangerously-bypass-approvals-and-sandbox, --dangerously-bypass-hook-trust and --add-dir.",
+     "source": "codex --help (codex-cli 0.166.0)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "In Codex's workspace-write mode the network is off by default ([sandbox_workspace_write] network_access = true turns it on). <root>/.git, including the resolved git dir, plus .agents and .codex are read-only. The approval policy 'untrusted' is retired.",
+     "source": "https://learn.chatgpt.com/docs/agent-approvals-security (redirect from developers.openai.com/codex/agent-approvals-security)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Codex's Windows sandbox: MXC needs Windows 11 24H2 or 25H2. elevated needs administrator-approved setup. unelevated has weaker network isolation. Under MXC, child processes stop when the foreground command exits, so detached dev servers may not survive.",
+     "source": "https://learn.chatgpt.com/docs/windows/windows-sandbox",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Codex PreToolUse can deny a call (permissionDecision deny, decision block, or exit 2) for Bash, exec_command, apply_patch and MCP tools, but not hosted WebSearch. Hooks the manager has not trusted are skipped, and a failed PreToolUse hook does not block the call.",
+     "source": "https://learn.chatgpt.com/docs/hooks",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Codex rules (execpolicy) are experimental and load from the rules/ folder of each active config layer. A project's rules load only when the project is trusted, and none can be passed for a single run.",
+     "source": "https://learn.chatgpt.com/docs/agent-configuration/rules.md",
+     "confidence": "verified"
+    },
+    {
+     "claim": "OpenCode V2 permissions are a `permissions` array of {action, resource, effect}, with actions such as shell, edit, read, webfetch, external_directory and subagent. The last match wins, and when nothing matches OpenCode asks. Its scanner splits compound commands and refuses ones it cannot analyze. Per-agent rules go under agents.<id>.permissions and are added after the global ones.",
+     "source": "https://opencode.ai/docs/permissions/",
+     "confidence": "verified"
+    },
+    {
+     "claim": "OpenCode has no OS sandbox: its shell runs with the host user's full filesystem, process and network access.",
+     "source": "https://opencode.ai/docs/permissions/",
+     "confidence": "verified"
+    },
+    {
+     "claim": "An OpenCode V2 server plugin can deny a call through ctx.permission.hook(\"evaluate\") by setting effect to deny with a message. A deny in the config is final and never reaches the hook. Local plugin paths in the V2 config must be directories.",
+     "source": "https://opencode.ai/docs/build/plugins/server/ ; https://opencode.ai/docs/plugins/",
+     "confidence": "verified"
+    },
+    {
+     "claim": "OpenCode policies (tool.use statements such as shell:git push *) deny a call outright, and a repository's config cannot re-allow what a broader config denies.",
+     "source": "https://opencode.ai/docs/policies/",
+     "confidence": "verified"
+    },
+    {
+     "claim": "OPENCODE_CONFIG_CONTENT, the --auto flag, and where inline config ranks against a repository's .opencode/ config in OpenCode 2.",
+     "source": "https://opencode.ai/docs/config/ (does not mention them); opencode is not installed locally",
+     "confidence": "unverified"
+    },
+    {
+     "claim": "GIT_CONFIG_COUNT and GIT_CONFIG_KEY_n/GIT_CONFIG_VALUE_n override config files and are overridden only by git -c.",
+     "source": "https://git-scm.com/docs/git-config (ENVIRONMENT)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "A pre-push hook that exits non-zero aborts the push. It receives '<local-ref> <local-sha> <remote-ref> <remote-sha>' lines on stdin, and git ignores a hook file without the executable bit.",
+     "source": "https://git-scm.com/docs/githooks",
+     "confidence": "verified"
+    },
+    {
+     "claim": "git push --no-verify skips the pre-push hook.",
+     "source": "https://git-scm.com/docs/git-push (not fetched)",
+     "confidence": "likely"
+    },
+    {
+     "claim": "An empty credential.helper value resets the helper list, which also drops Git Credential Manager, the system-level helper on Windows.",
+     "source": "https://git-scm.com/docs/gitcredentials (not fetched)",
+     "confidence": "likely"
+    },
+    {
+     "claim": "With GH_CONFIG_DIR pointing to an empty folder, gh acts signed out and does not fall back to the keyring.",
+     "source": "not checked",
+     "confidence": "unverified"
+    },
+    {
+     "claim": "localloop-pro's gitSafety.ts has two overlapping deny implementations (regex blockedCommand, and checkAgentShellCommand with its own splitter), a V1-shape OpenCode permission.bash map, a pre-push hook that refuses the default branch, deletions and non-fast-forward pushes, and an install step that sets extensions.worktreeConfig and a per-worktree core.hooksPath.",
+     "source": "forks/localloop-pro: git show 859b859:server/gitSafety.ts lines 24-50, 134-144, 190-215, 218-250",
+     "confidence": "verified"
+    },
+    {
+     "claim": "localloop-pro's Codex hook script returns the office's JSON decision instead of {}, and QA sessions run under the 'qa' role.",
+     "source": "forks/localloop-pro: git show 1e27b69 (server/clis.ts, server/swarm.ts diff)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "francovp's Codex CEO runs with -c features.shell_tool=false -c features.multi_agent=false --sandbox read-only --ask-for-approval never, and the office MCP gets default_tools_approval_mode=\"approve\". The OpenCode CEO has permission {edit:'deny', bash:'deny', task:'deny', webfetch:'allow'}.",
+     "source": "forks/francovp: git show ed286d1:server/clis.ts lines 330-336, 353-355; commit 7685466",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The prior audit grades enforced-git-safety port-adapt, code quality 2/5. It flags weak regex parsing and the core.hooksPath override that turns off the repository's own hooks, and advises relying on GitHub branch protection.",
+     "source": ".ai-factory/research/upstream-fork-audit/features.json:3922-3953",
+     "confidence": "verified"
+    }
+   ],
+   "plan_items": [
+    {
+     "title": "P0 docs: replace the prompt-only SAFETY rule with D-005",
+     "scope": "Rewrite the SAFETY bullet that says office rules live in prompts and forbids hooks, permission rules or sandboxes. In its place, describe the four rules kinds, the git guard and that enforcement is per CLI, so future agents don't strip it out. CLAUDE.md already has the owner's uncommitted edits: coordinate with them.",
+     "effort": "S",
+     "files": [
+      "CLAUDE.md",
+      "AGENTS.md",
+      "docs/how-it-works.md"
+     ],
+     "tests": "None (docs only).",
+     "depends_on": []
+    },
+    {
+     "title": "P1 Pure office-rules core",
+     "scope": "New server/officeRules.ts with:\n- RulesKind = builder | tester | read-only | ceo, and rulesFor(role, task): issue and fix give builder, qa gives tester, the CEO gives ceo; workflow executors pass read-only.\n- checkToolCall(rules, toolName, input): one decision that knows each CLI's tool shapes. Claude: Bash, PowerShell, Write, Edit, MultiEdit, NotebookEdit. Codex: Bash, exec_command (command as array or string), apply_patch (paths from its *** Add/Update/Delete File lines). OpenCode: action and resource.\n- One shell tokenizer: splits on && || ; | & and newlines, handles quotes, git -C and -c, git.exe and gh.exe, PowerShell's & operator, and one level of bash -c, sh -c and powershell -Command. It denies a guarded verb when it can't parse the command.\n- claudeDenyRules(rules): Bash() and PowerShell() deny strings. opencodePermissions(rules): the V2 permissions array.\n- Denial reasons say what to do instead.\nAlso add SessionOptions.defaultBranch and an optional `rules` override, and pass repo.defaultBranch from swarm.ts (one line at ~2984). Reuse localloop-pro's deny list as data, not its code.",
+     "effort": "M",
+     "files": [
+      "server/officeRules.ts",
+      "server/officeRules.test.ts",
+      "server/agentRunner.ts",
+      "server/swarm.ts"
+     ],
+     "tests": "Table-driven Vitest for each kind:\n- Denied for builder: git push origin main, git push origin HEAD:main, git -C . push -f, git push --no-verify, git -c core.hooksPath= push, gh pr merge 12, gh api -X PUT repos/o/r/pulls/1/merge, npm test && git push origin main, PowerShell '& gh.exe pr merge 3'.\n- Allowed for builder: git push -u origin swarm/issue-1-x, git push origin HEAD:swarm/issue-1-x, gh pr create.\n- Tester: git commit and gh pr comment denied; npm test and writing a probe file in tmp allowed.\n- read-only: Write inside the worktree denied, Write in tmp allowed.\n- ceo: Write is allowed only to the notes file.\n- Codex apply_patch touching ../other denied for builder.",
+     "depends_on": []
+    },
+    {
+     "title": "P2 Claude Code: enforce office rules in both runtimes",
+     "scope": "Changes:\n- cliRunner: the PreToolUse case (:654-667) and idleHook (:445-446) return checkToolCall's decision, subagent calls included, and log a '⛔ <reason>' error line on each denial.\n- The --settings file (:841-852) gets permissions.deny from claudeDenyRules plus disableAllHooks:false.\n- agentRunner: add an SDK hooks.PreToolUse callback with the same decision and settings.permissions.deny. Keep canUseTool, because allow rules can approve a call before canUseTool is asked.\n- The CEO's Write and Edit are limited to its notes file.\n- The clis.ts:251 comment becomes true.\n- Demo parity: one fake developer session in demo.ts shows a denied 'git push origin main' line.\nCloud Box agents are not covered here: boxHelpers stays allow, a known gap (see open risks).",
+     "effort": "M",
+     "files": [
+      "server/cliRunner.ts",
+      "server/agentRunner.ts",
+      "server/clis.ts",
+      "server/demo.ts",
+      "server/cliRunner.test.ts",
+      "server/clis.test.ts"
+     ],
+     "tests": "The settings JSON holds the deny rules for each kind and disableAllHooks false. The hook handler returns permissionDecision deny with the reason for gh pr merge, both from the main session and from a subagent (agent_id set). The SDK options include hooks.PreToolUse. A demo test checks that the denial line appears in the fake session.",
+     "depends_on": [
+      "P1 Pure office-rules core"
+     ]
+    },
+    {
+     "title": "P5 Git guard and credential withholding for every CLI",
+     "scope": "New server/gitGuard.ts:\n- Hook sources written with LF line endings and chmod 0755 to <SWARM_HOME>/bin/git-hooks.\n- pre-push refuses the default branch (CUBEFARM_PROTECTED_REF), deletions and non-fast-forward pushes, then runs the repository's own pre-push (local core.hooksPath, else <git-common-dir>/hooks) with the same stdin.\n- Stubs for the other standard client hooks only pass through to the repository's hooks, so husky and lefthook keep working.\n- gitGuardEnv(kind, defaultBranch, baseEnv) is pure. It appends core.hooksPath through GIT_CONFIG_COUNT, keeping any pairs already set. For tester, read-only and ceo it also resets credential.helper, sets GIT_TERMINAL_PROMPT=0 and GCM_INTERACTIVE=never, points GH_CONFIG_DIR at an empty office folder, and removes GH_TOKEN and GITHUB_TOKEN.\n- Merged into the environment both runners build (cliRunner.ts:886-899, agentRunner.ts ~330-337). The office's own git calls never get it.\n- No Backend method, so no demo fake is needed. Demo sessions don't run git.",
+     "effort": "M",
+     "files": [
+      "server/gitGuard.ts",
+      "server/gitGuard.test.ts",
+      "server/cliRunner.ts",
+      "server/agentRunner.ts"
+     ],
+     "tests": "Pure tests of gitGuardEnv: the pairs append to an existing GIT_CONFIG_COUNT, and testers get no GitHub credentials.\nReal-git test in a temp folder whose name has a space (the same pattern as workspace.test.ts), with a bare origin and a clone under the guard env:\n- push to main is rejected;\n- push to swarm/issue-1 succeeds;\n- a force push and a deletion are rejected;\n- a local core.hooksPath pre-push (husky-like) still runs and can veto the push.\nMust pass on both the ubuntu and windows CI runners.",
+     "depends_on": [
+      "P1 Pure office-rules core"
+     ]
+    },
+    {
+     "title": "P4 Codex: hook decisions, hook trust and read-only sandbox",
+     "scope": "Changes:\n- CODEX_HOOK_SOURCE (clis.ts:433-441) prints the office's JSON reply. When the office can't be reached it exits 2 for tool input that mentions git or gh (fail closed for guarded commands only) and stays silent otherwise.\n- Every Codex session gets --dangerously-bypass-hook-trust, so the office's hooks run without the manager trusting them in /hooks.\n- builder and tester keep --dangerously-bypass-approvals-and-sandbox (workspace-write makes .git read-only).\n- read-only and ceo kinds switch to --sandbox read-only --ask-for-approval never.\n- ceo additionally gets -c features.shell_tool=false and francovp's office MCP approval mode. That part lands only after the ceo-any-cli cherry-pick (625e1df, 7685466, plus the fix so Codex local models still work).\n- Check that --dangerously-bypass-hook-trust exists in BOX_CODEX_VERSION 0.163.0, or bump the pin.",
+     "effort": "M",
+     "files": [
+      "server/clis.ts",
+      "server/clis.test.ts",
+      "server/cliRunner.ts"
+     ],
+     "tests": "launchArgs for each kind: the bypass flag only for builder and tester, the read-only sandbox for read-only and ceo, hook trust bypass always. A script test runs the hook source with node against a local http server (the boxHelpers.test.ts pattern): the office's deny is passed through, and an unreachable office gives exit 2 for 'git push origin main' and {} for 'ls'.",
+     "depends_on": [
+      "P1 Pure office-rules core",
+      "P2 Claude Code: enforce office rules in both runtimes"
+     ]
+    },
+    {
+     "title": "P3 Claude Code: fail closed when the office can't answer",
+     "scope": "Bump @anthropic-ai/claude-agent-sdk to a release that bundles Claude Code 2.1.314 or later. Set onFailure:\"block\" only on the PreToolUse HTTP hook; the other hooks only report and stay fail-open. Add permissions.blockWritesOutsideWorkingDirectories:true for every kind. The manager runs npm install; agents never do. Alternative if the bump is blocked: --permission-mode dontAsk, so a failed hook makes a prompt that is denied instead of one that waits. That mode is not verified on the bundled 2.1.283.",
+     "effort": "S",
+     "files": [
+      "package.json",
+      "package-lock.json",
+      "server/cliRunner.ts",
+      "server/cliRunner.test.ts"
+     ],
+     "tests": "The settings JSON has onFailure block on PreToolUse only, and the block-writes key. CI typecheck, test and build pass with the new SDK.",
+     "depends_on": [
+      "P2 Claude Code: enforce office rules in both runtimes"
+     ]
+    },
+    {
+     "title": "P6 OpenCode 2: permissions array and plugin evaluate hook",
+     "scope": "Lands after the D-001 OpenCode 2 migration PR.\n- launchArgs opencode puts opencodePermissions(rules) in the V2 `permissions` array: a catch-all allow first, then the denials for each kind, external_directory denied except the machine temp folder, and for ceo edit, shell and subagent denied (francovp's rules in V2 names).\n- The V2 plugin directory registers ctx.permission.hook(\"evaluate\") for shell and edit. It POSTs to the office's hook URL as a PreToolUse-shaped event and sets effect deny with message from the reply.\n- If inline config can carry policies, add tool.use hard denies, which a repository cannot loosen.",
+     "effort": "M",
+     "files": [
+      "server/clis.ts",
+      "server/clis.test.ts",
+      "server/cliRunner.ts"
+     ],
+     "tests": "The config built for each kind has the expected permissions entries in last-match-wins order. Plugin source test: a stubbed permission ctx gets effect deny when the office replies deny. The rest of the OpenCode 2 behaviour can't be checked here: opencode is not installed.",
+     "depends_on": [
+      "P1 Pure office-rules core",
+      "P2 Claude Code: enforce office rules in both runtimes"
+     ]
+    },
+    {
+     "title": "P7 (optional) Warn when the default branch has no GitHub ruleset",
+     "scope": "Add Backend.branchRules(fullName, branch) using gh api repos/{o}/{r}/rules/branches/{b}, with a demo fake that returns a protected branch. A pure missingProtections(rules) lists what is missing: pull_request, non_fast_forward and deletion. Show it as a floor warning or in doctor. The office never changes repository settings; that is the manager's call. This is the only server-side control for default-branch pushes.",
+     "effort": "S",
+     "files": [
+      "server/github.ts",
+      "server/backend.ts",
+      "server/demo.ts",
+      "server/rulesets.ts",
+      "server/rulesets.test.ts"
+     ],
+     "tests": "missingProtections is tested on sample API payloads. The demo fake makes --demo show no warning.",
+     "depends_on": [
+      "P5 Git guard and credential withholding for every CLI"
+     ]
+    }
+   ],
+   "open_risks": [
+    "Every agent runs as the same OS user as the manager and uses the manager's gh login, so none of this is a security boundary against a determined agent: running gh or git by full path, a node -e script, or unsetting GIT_CONFIG_COUNT gets past it. It stops mistakes, not adversaries. Only a GitHub ruleset blocks default-branch pushes, and nothing on GitHub can tell an agent's merge from the manager's.",
+    "Cloud Box agents stay unenforced until the Box hook script carries the policy itself: boxHelpers.ts answers allow locally and never asks the office. P5's pre-push guard also has to be installed inside the Box. That needs a follow-up PR.",
+    "Fail-open windows: Claude Code before 2.1.295 and Codex both let a call through when the hook times out or fails, for example during an office restart. P3 (the SDK bump to 2.1.295 or later for onFailure, 2.1.314 for the write block) and P4's exit 2 for git/gh commands narrow these windows but don't close them.",
+    "--dangerously-bypass-hook-trust may also run hooks that the repository itself supplies without review (scope not verified). Whether the flag exists in the pinned BOX_CODEX_VERSION 0.163.0 is not verified either.",
+    "A Codex read-only sandbox on Windows 10, with no MXC and no elevated setup, is untested: it may ask for setup, fall back to unelevated, or fail to start. Test it on the manager's machine before switching reviewer, analysis and CEO sessions to it.",
+    "False denials can stall an agent: a parser mistake on a branch name such as 'main-fix', or a PowerShell quoting form it doesn't know. Keep the deny list narrow and test it against real command samples, make denial reasons say what to do instead, and show every denial in the agent's terminal.",
+    "Withholding credentials from QA breaks git fetch on private repositories in QA sessions. The worktree setup already fetches origin before the session starts, so this is acceptable. That gh falls back to signed out, and not to the keyring, when GH_CONFIG_DIR is empty is not verified.",
+    "OpenCode 2 is not installed, so OPENCODE_CONFIG_CONTENT, the --auto flag, where inline config ranks against a repository's .opencode/ config, and the plugin event names are all unverified. A repository's own OpenCode config might re-allow commands unless policies apply.",
+    "A repository's .claude/settings.json can set disableAllHooks or add allow rules. P2 pins disableAllHooks:false through --settings; the SDK runtime needs the same pin through its settings option.",
+    "Upstream sync: cliRunner.ts and clis.ts change often upstream. Keep the logic in new files (officeRules.ts, gitGuard.ts) and the edits to upstream files to small call sites.",
+    "The CEO on Codex or OpenCode depends on the ceo-any-cli cherry-pick, which carries its own regressions: Codex local models in effectiveModel, and changes to OpenCode workers. The CEO parts of P4 and P6 wait for it."
+   ]
+  },
+  "verification": {
+   "checked": [
+    {
+     "claim": "1. Terminal runtime approves every tool call: ALLOW is a constant PreToolUse allow, returned for the active session and for an idle CLI, subagent calls included.",
+     "verdict": "holds",
+     "evidence": "server/cliRunner.ts:188-189 defines ALLOW. idleHook returns it for PreToolUse (:444-446). The active hook returns ALLOW after the `if (!sub)` logging block (:655-667). `sub` is set from agent_id (:644), so subagent calls get ALLOW too."
+    },
+    {
+     "claim": "2. clis.ts comment says the hook may 'deny with an office rule', but no deny path exists in server/.",
+     "verdict": "holds",
+     "evidence": "server/clis.ts:251 holds the comment. `grep -i deny server/*.ts` finds only that line plus an unrelated x-frame-options DENY in server/syncProxy.test.ts:34,52. The only refusal in the hook code is UserPromptSubmit's {decision:'block'} (cliRunner.ts:450), which is not a tool deny."
+    },
+    {
+     "claim": "3. Claude Code is started with acceptEdits, --settings (HTTP hooks, 120 s via the keeper, else 30 s) and --disallowedTools (AskUserQuestion, plan tools, cross-turn tools, plus Bash/PowerShell/NotebookEdit for the CEO).",
+     "verdict": "holds",
+     "evidence": "server/clis.ts:246-264 and server/cliRunner.ts:842. One nuance: for cloud (Box) agents the hooks are `command` hooks with timeout 30, not HTTP hooks (cliRunner.ts:842)."
+    },
+    {
+     "claim": "4. Codex runs with --dangerously-bypass-approvals-and-sandbox because its sandbox cannot reach the credential store, and its hook script always prints {}.",
+     "verdict": "holds",
+     "evidence": "server/clis.ts:280-284 has the flag and that rationale as a code comment. CODEX_HOOK_SOURCE (clis.ts:433-443) always writes '{}'. The credential-store reason is upstream's comment only and I did not confirm it in OpenAI docs. There is a third-party report of Windows-sandbox git HTTPS failures (openai/codex #31073 via an upd.dev mirror), so treat the reason as unverified."
+    },
+    {
+     "claim": "5. The office answers Codex's 'Hooks need review' with 'Continue without trusting', so hooks run only after the manager trusts them.",
+     "verdict": "holds",
+     "evidence": "server/clis.ts:361-368 (hookReviewKey) and server/cliRunner.ts:912-924. Codex docs say non-managed hooks are 'skipped until trusted' (https://learn.chatgpt.com/docs/hooks). `codex --help` 0.166.0 lists --dangerously-bypass-hook-trust."
+    },
+    {
+     "claim": "6. OpenCode gets the V1 permission object {edit,bash,webfetch:'allow'} plus --auto, passed through OPENCODE_CONFIG_CONTENT.",
+     "verdict": "holds",
+     "evidence": "server/clis.ts:289-306. The V2 docs confirm this is the V1 shape: 'In V2, use permissions, shell, and subagent instead of permission, bash, and task'. V2 uses an array of {action,resource,effect} (https://opencode.ai/docs/permissions/, https://opencode.ai/v2/permissions.md)."
+    },
+    {
+     "claim": "7. The SDK runtime approves everything (canUseTool allowAll, acceptEdits) and loads user/project/local settings, so allow rules can approve before canUseTool is asked.",
+     "verdict": "holds",
+     "evidence": "server/agentRunner.ts:124-126 (allowAll), :358 (settingSources), :367-368. The SDK permissions doc gives the order hooks, deny, ask, mode, allow rules, then canUseTool. It also says: 'A tool call approved at any earlier step, by acceptEdits ... or by an allow rule, skips your canUseTool callback' (https://code.claude.com/docs/en/agent-sdk/permissions)."
+    },
+    {
+     "claim": "8. A cloud agent's Box hook answers PreToolUse with allow locally, without asking the office.",
+     "verdict": "holds",
+     "evidence": "server/boxHelpers.ts:56-58 writes permissionDecision 'allow' itself. The hook only writes events to a file and never calls the office."
+    },
+    {
+     "claim": "9. Office rules exist only as prompt text, and CLAUDE.md in this checkout tells agents not to add hooks/permission rules/sandboxes.",
+     "verdict": "wrong",
+     "evidence": "The prompt part holds: server/prompts.ts:92 (developer rules) and :123 (QA rules), with no enforcement code. The CLAUDE.md part is stale. `git show HEAD:CLAUDE.md` line 35 has the old rule, but the working-tree CLAUDE.md (uncommitted, `git diff CLAUDE.md`) already replaced it at lines 33-37 with 'VisualFactory decision (2026-11-14): these rules move into enforcement'. AGENTS.md never contained the rule. docs/how-it-works.md:87,89 and README.md:153 still say agents are unsandboxed and every call is approved."
+    },
+    {
+     "claim": "10. The QA prompt never asks QA to use gh; the office posts the report, so withholding GitHub credentials costs QA nothing.",
+     "verdict": "wrong",
+     "evidence": "The literal part holds: no 'gh' in qaSystemPrompt (server/prompts.ts:99-125), and the office puts the PR body, the linked issue and the checks state into the prompt (server/swarm.ts:3350-3361, server/qaPrompt.ts:40). 'Costs nothing' is overstated, though. The conflict re-test asks QA to 'confirm GitHub's checks are green on the new head' (server/qaPrompt.ts:58), a GitHub read. prompts.ts:120 invites 'a throwaway merge if you need newer work', which needs `git fetch` with credentials on a private HTTPS remote. Both prompt lines need rewording in the same PR."
+    },
+    {
+     "claim": "11. The CEO is always Claude Code upstream.",
+     "verdict": "holds",
+     "evidence": "shared/types.ts:176 (the comment on AgentCli), server/swarm.ts:4210 (cli: 'claude' in ensureCeo), and swarm.ts:2682 (sessionRuntime forces 'claude' for role ceo)."
+    },
+    {
+     "claim": "12. Sessions receive role, task and the machine env, but not the floor's default branch.",
+     "verdict": "holds",
+     "evidence": "server/swarm.ts:2984-2998 passes role, task and env: this.machineEnv(a). SessionOptions (server/agentRunner.ts:16-49) has no default-branch field. The default branch appears only as text in the system prompts (prompts.ts:89, :107)."
+    },
+    {
+     "claim": "13. Each local agent has its own clone (machines/<m>/repos/<owner>__<repo>) and worktree (machines/<m>/work/...), and the machine env is only TMP/TEMP/TMPDIR.",
+     "verdict": "holds",
+     "evidence": "server/workspace.ts:819-851 and server/machines.ts:42-46. Note workspace.ts:842-843: the machine clone takes its origin from the floor checkout, which can be the user's own folder (workspace.ts:28), so the remote may be SSH."
+    },
+    {
+     "claim": "14. The office's own merge uses gh pr merge with --match-head-commit.",
+     "verdict": "holds",
+     "evidence": "server/github.ts:205-208."
+    },
+    {
+     "claim": "15. Agent SDK 0.3.283 bundles Claude Code 2.1.283. On this machine: claude 2.1.316, codex-cli 0.166.0, gh 2.103.3, git 2.33.0.windows.2, no opencode, Windows 10 19045.",
+     "verdict": "holds",
+     "evidence": "node_modules/@anthropic-ai/claude-agent-sdk/package.json:3,91; package.json:50. The --version outputs match. opencode: command not found. `ver` prints 10.0.19045.7807. Key implication: the office runs the bundled 2.1.283 binary, not the 2.1.316 on PATH (server/clis.ts:79-108, docs/how-it-works.md:78)."
+    },
+    {
+     "claim": "16. PreToolUse decisions are allow/deny/ask/defer; a deny reason is shown to Claude; defer needs -p; deny and ask rules are still evaluated whatever the hook returns.",
+     "verdict": "holds",
+     "evidence": "https://code.claude.com/docs/en/hooks (PreToolUse decision control): '\"defer\" ... requires non-interactive mode with the -p flag'; 'For \"deny\", shown to Claude'; 'Deny and ask rules are still evaluated regardless of what the hook returns'."
+    },
+    {
+     "claim": "17. HTTP hooks fail open by default; onFailure:\"block\" makes them fail closed and needs v2.1.295+.",
+     "verdict": "holds",
+     "evidence": "https://code.claude.com/docs/en/hooks: timeouts, non-2xx and connection failures are 'non-blocking error[s]'. onFailure takes 'continue' or 'block' and 'Requires Claude Code v2.1.295 or later'. That is above the bundled 2.1.283."
+    },
+    {
+     "claim": "18. Rules are evaluated deny, then ask, then allow; a hook's allow cannot get past a deny rule; lists merge across scopes.",
+     "verdict": "holds",
+     "evidence": "https://code.claude.com/docs/en/permissions: 'Rules are evaluated in order: deny, then ask, then allow'; 'PreToolUse hook decisions don't bypass permission rules'. https://code.claude.com/docs/en/settings: 'Lists merge instead of overriding'. Caveat the plan misses: the same section says a mod installed by the manager that handles tool.check 'can approve a call that a deny rule refuses or a PreToolUse hook blocked' when there are no managed settings and no Team/Enterprise login."
+    },
+    {
+     "claim": "19. Bash rules split compound commands but are not a security boundary: Bash(git push *) misses 'git -C . push' and 'git -c ... push'. PowerShell rules have the same shape and are checked on the parsed command.",
+     "verdict": "holds",
+     "evidence": "https://code.claude.com/docs/en/permissions, 'What a Bash rule doesn't match' (that exact table row) and 'PowerShell': 'same shape as Bash rules ... parses the PowerShell AST and checks each command in a compound command independently'."
+    },
+    {
+     "claim": "20. dontAsk mode denies any call that would otherwise prompt.",
+     "verdict": "holds",
+     "evidence": "https://code.claude.com/docs/en/permissions (Permission modes): 'Auto-denies every call that would otherwise prompt, though a mod you installed can still approve some of those calls'. `claude --help` 2.1.316 lists dontAsk under --permission-mode."
+    },
+    {
+     "claim": "21. --settings ranks above user/project/local settings and below managed settings.",
+     "verdict": "holds",
+     "evidence": "https://code.claude.com/docs/en/settings: '--settings ... applies it above your user, project, and local files and below managed settings'."
+    },
+    {
+     "claim": "22. disableAllHooks can be set from any settings file, so a repo's .claude/settings.json could switch the office's hooks off unless --settings pins it to false.",
+     "verdict": "holds",
+     "evidence": "https://code.claude.com/docs/en/hooks: 'Claude Code reads the value left after settings precedence applies'. Project settings outrank user settings, and --settings 'takes precedence over project and local settings'. The permissions doc ('Before you run claude -p') says repository project settings 'can set it back'."
+    },
+    {
+     "claim": "23. permissions.blockWritesOutsideWorkingDirectories makes Write/Edit/NotebookEdit refuse paths outside the working directories, from v2.1.314.",
+     "verdict": "holds",
+     "evidence": "https://code.claude.com/docs/en/permissions ('Block file-tool reads and writes...') and https://code.claude.com/docs/en/settings (exceptions table): 'Requires Claude Code v2.1.314 or later'. The doc adds that it 'doesn't limit shell commands, MCP tools, or the programs hooks run'. It is not available in the bundled 2.1.283."
+    },
+    {
+     "claim": "24. Claude Code's sandbox runs on macOS, Linux and WSL2; native Windows runs unsandboxed and failIfUnavailable exits instead; it covers shell commands only.",
+     "verdict": "holds",
+     "evidence": "https://code.claude.com/docs/en/sandboxing: 'On native Windows, Claude Code runs commands unsandboxed'; 'with failIfUnavailable set, Claude Code exits at startup on those machines'; 'The sandbox covers shell commands only. Claude's file tools, MCP servers, and hooks run outside it.'"
+    },
+    {
+     "claim": "25. Codex 0.166 offers -s read-only|workspace-write|danger-full-access, -a on-request|never, --dangerously-bypass-approvals-and-sandbox, --dangerously-bypass-hook-trust and --add-dir.",
+     "verdict": "holds",
+     "evidence": "`codex --help` (codex-cli 0.166.0) lists all five. -a accepts only on-request and never."
+    }
+   ],
+   "recommendation_still_holds": true,
+   "corrections": "Option C (layered: pure policy, per-CLI adapters, git guard, credential withholding) still holds. These points must change before it ships:\n\n1. Version gating is understated. The office runs the Claude Code bundled with the SDK (2.1.283; server/clis.ts:79-108, node_modules/@anthropic-ai/claude-agent-sdk/package.json:91), not the 2.1.316 on PATH. onFailure:\"block\" (2.1.295+) and blockWritesOutsideWorkingDirectories (2.1.314+) are unusable until the SDK is bumped. Until then the hook fails open, so the static permissions.deny in --settings is the only layer that does not depend on the office answering. Name the SDK bump explicitly as the prerequisite of whichever PR turns these on.\n\n2. Mods are a gap. Per https://code.claude.com/docs/en/permissions ('Precedence among rules, hooks, and mods'), a mod the manager installed that handles tool.check can approve calls that deny rules or PreToolUse hooks refuse, unless there are managed settings or a Team/Enterprise login. Agents load the manager's setup, so this applies. Investigate the SDK `managedSettings` option, which exists in 0.3.283 (sdk.d.ts:2210-2238) and is filtered restrictive-only. Unverified: whether that parent tier counts as 'managed' for the mod rule, and whether the CLI has a `--managed-settings` flag (it is referenced only in sdk.d.ts:8511 and is absent from `claude --help`).\n\n3. The git-guard claim 'Only git -c can remove it' is wrong. Per git-config docs (installed Git 2.33), GIT_CONFIG_COUNT is overridden by `git -c`, which is GIT_CONFIG_PARAMETERS, and an agent can set either variable in its own command (`GIT_CONFIG_COUNT=0 git push`; an empty value counts as 0). The deny layer must also refuse commands that set GIT_CONFIG_*. The gh api deny list must cover git/refs and contents write endpoints, not only merge endpoints. Pushes can also go through libgit2 or other tools. Present the guard as an accident-catcher. The GitHub ruleset stays the only real control.\n\n4. Credential withholding is not a boundary on native Windows, and it misses SSH. This machine uses credential.helper=manager-core (system gitconfig) and gh's token in the keyring, which any shell can read back (for example `git -c credential.helper=manager-core credential fill`, or by clearing GH_CONFIG_DIR). A floor can use the user's own folder, whose origin may be SSH (workspace.ts:28, :842-843), and credential.helper does nothing there. Add GIT_SSH_COMMAND to a refusing command for tester, read-only and ceo, and list 'restoring credentials' as prompt-only.\n\n5. QA does read GitHub. qaPrompt.ts:58 asks QA to 'confirm GitHub's checks are green on the new head', and prompts.ts:120 suggests a fresh merge, which needs a fetch. Reword both in the tester PR to use the checks line the office already provides.\n\n6. Codex hooks fail open on error or timeout, and apply_patch exposes only the patch text in tool_input.command (https://learn.chatgpt.com/docs/hooks). Run the policy check inside the hook script itself rather than in a round trip to the office, and parse '*** Update/Add/Delete File:' paths from the patch. The .git read-only claim for workspace-write is supported only by third-party sources and a mirrored Codex commit (#1765), not official docs: unverified. The Windows sandbox claims (MXC stopping detached dev servers, admin setup for the legacy sandboxes) are also unverified. That makes '--sandbox read-only' for the read-only kind on Windows unproven: test it before shipping.\n\n7. The OpenCode 2 'plugin evaluate hook' is unverified. No official V2 doc names one. The official V2 facts:\n   - `permissions` is an array, the last match wins, and no match falls back to ask, which hangs an unattended agent. Put a catch-all allow first and the denies after it.\n   - external_directory is allowed by default.\n   - A `policies` hard-deny layer exists that 'turns allow or ask into deny' (https://opencode.ai/v2/policies.md). That fits enforcement better than a plugin hook. Whether policies passed via OPENCODE_CONFIG_CONTENT outrank project config is unverified.\n\n8. Cloud (Box) agents are missing from the matrix. Their hook allows locally (boxHelpers.ts:56-58), so the policy must be built into the Box hook script, and the git-guard env and hooks folder must be installed in the Box. Boxes run Linux, where Claude Code's sandbox is supported, so sandboxing is an option there that the plan currently skips.\n\n9. P0 doc scope needs fixing:\n   - CLAUDE.md is already edited in the working tree (uncommitted).\n   - AGENTS.md has no such rule.\n   - Still contradicting D-005: docs/how-it-works.md:78-79, :87, :89, README.md:153, and the code comments at agentRunner.ts:122-123, cliRunner.ts:188, clis.ts:251 and clis.ts:280-281.\n\n10. Fork citation: localloop-pro 859b859 is 'Test shared server request boundary (#86)'. The git-safety work is 1e27b69 'Enforce agent git safety rules (closes #80) (#85)' plus merge 78ddfbc. 1e27b69 also defaults new floors to autoMerge off: don't cherry-pick that part silently.\n\n11. Minor: the docs say Read/Edit deny rules also cover recognized Bash writes (tee, sed, redirections), per https://code.claude.com/docs/en/permissions. So shell writes for Claude Code are partly covered, but not as 'everything outside the worktree', because allow rules can't carve exceptions out of a deny rule."
+  }
+ },
+ "zod": {
+  "research": {
+   "summary": "D-004 audit of REST input validation at upstream 157efde. There is one router, server/index.ts, and no express.Router anywhere else. It registers 78 /api routes: 51 POST, 13 GET, 6 DELETE, 4 PUT, 3 PATCH, 1 ALL. Three are agent callbacks: hooks :38 and MCP :39-40. The other 75 are manager REST. Every route reaches Swarm through the route() wrapper (:44-51), and ids come from num() (:52-56), str() (:57) and repoId() (:59).\n\nInventory by how each route validates today (index.ts line, then the Swarm call):\n\n(a) Zod already (7 routes): PUT /api/voice/key :210 voice.setKey; PUT /api/cloud/key :212 setCloudKey; PUT /api/cloud/token :213-219 setCloudToken; GET /api/voice/messages/:id :224-235 (params+query); GET /api/voice/sample :248-251; GET /api/voice/standup :252-258. These use an inline parse helper at :199-203. POST pulls/:n/fix :164 uses its own zod schema in parseSendBackNote (sendBack.ts:12-19), then sendBackToDev. The CEO MCP tools validate with zod as well (ceo.ts:54-160).\n\n(b) No body, path ids only, with 404s coming from Swarm (26 routes): GET state :61, DELETE repos/:repo :109, sync :110, sync-folder :111, issues/:n/close :118 (closeIssueByManager -> checkCloseIssue), onboard :120, DELETE preview :130, DELETE pr-previews/:n :135, GET qa-shots/:i :147-160 (hand int check), pulls/:n/close :162, DELETE agents/:id :181, stop :183, reset :184, sign-in :186, GET prompt :187, GET screen :188-194, cloud test/orphans/demo-expire :220-222, GET voice/voices :223, DELETE voice/cache :236, GET notify/push/key :262, usage/resume :268, GET journal/days :276, journal/sample :284, ceo/review :288.\n\n(c) Coerced with str()/typeof/num() at the route, business rules in Swarm: GET github/repos?owner :63 listGithubRepos; POST repos :68 connectRepo; GET folders?dir :71; folders/connect :72; folders/publish :73-83; setup :84-96; repos/new :97-107 (name regex at swarm.ts:1460); issues :112-117 createIssue; plan :119; preview :122-129 (hand check on pr); pr-previews/:n :134; previews/watch :136-145 (hand regex); preview/sync :146; pulls/:n/qa :163; repos/:repo/agents :165-178 hireAgent; agents/:id/assign :182; agents/:id/message :185; notify/test :261; DELETE push/devices :264; journal/events :277-283 (parseRange, journal.ts:83); ceo/message :287; phone/read :289; requests/:id/approve :290-302; requests/:id/reject :303; voice/transcribe :240-247 (raw body, 413 cap).\n\n(d) Whole body or an unknown field handed to Swarm, which checks it with lenient sanitizers or tested pure parsers: PATCH repos/:repo :108 (updateRepo, parsePreviewPatch); pong :132 (parsePongResult); PATCH agents/:id :180 (updateAgent, cleanStyle); PATCH settings :196 (updateSettings, swarm.ts:3704-3757); PUT notify/webhooks/:channel :260 (parseWebhook); POST push/devices :263 (checkSubscription); office/update :266; usage/simulate :269; doctor fix/ignore/demo :271-273; demo/proposals :305; decor buy/place :309-310; progress/coffee :311; progress/demo :312.\n\n(e) No validation at all: POST pulls/:n/merge :161. req.body.method goes straight to github.ts:208 as `--${method}`, so any gh pr merge flag can be injected.\n\nError contract: throwing HttpError(status, message) (server/httpError.ts) makes the error middleware (index.ts:328-335) answer {error}. Body-parser 4xx errors pass through with their own status. Anything else is a logged 500. The client turns data.error into a toast (client/src/api.ts:20-23).\n\nOther gaps found:\n- Under Express 5.2.1 / body-parser 2.3.0, req.body stays undefined when a request has no JSON body (read.js:46-55). Routes that read req.body.x without ?. (index.ts :66, :68, :72, :76-80, :88-93, :100-104, :115, :169-175, :182, :185, :287) therefore answer a 500 TypeError instead of a 400.\n- PATCH /api/agents/:id with a non-string name crashes at swarm.ts:2532 (500).\n- Agent model strings have no length or character check and become CLI argv (swarm.ts:2540, clis.ts:249, clis.ts:302).\n- Messages to an agent have no length cap (swarm.ts:3681-3690), while messages to the CEO are capped at 4000.\n- The manager's issue route has no title or body caps; the CEO's create tool has them (ceo.ts:132-133).\n\nKeystrokes are not REST. They arrive over /ws/term (terminal.ts:160-175), which already checks types, caps input at 64 KB (:167-168) and clamps resize (:102-104). They are outside D-004.\n\nSecrets are already covered: zod on the voice and cloud keys, and tested parsers for webhooks and push subscriptions.\n\nA zod helper already exists (index.ts:199-203) and zod 4.6.5 is installed, so no new dependency is needed. The working tree's uncommitted CLAUDE.md:200-202 already states the D-004 rule; upstream's wording was \"by hand at the route or in the swarm\".",
+   "recommendation": "Fix the real gaps first, in small PRs, and leave routes that already validate well alone until they are touched (D-004 says the rest \"migrate over time\").\n\n1. The helper. Move the existing parse<T>(schema, value) from index.ts:199-203, unchanged, into a new server/restInput.ts. It throws HttpError(400) with messages like \"field: message; ...\", and uses \"request\" when the problem is the whole body. Routes pass `req.body ?? {}` only when every field is optional. Otherwise an undefined body becomes a clean 400 instead of today's 500.\n\n2. Where schemas live. Put them in server/restInput.ts next to the helper, because index.ts cannot be imported by tests: it awaits swarm.init() and starts listening when imported. One-line schemas with no rules may stay inline at the route, as index.ts:210-258 already does. Do not put them in shared/ for now: the client imports shared/outside, shared/notify and shared/cloud at runtime (store.ts:5-7), so zod there would ship to every browser, including phones in pocket mode. The client keeps its own request types in api.ts.\n\n3. What zod checks. Shape, types, enums and generous abuse caps only. The limits users can actually hit stay as Swarm slices: name 24 chars, approve/reject note 400, mission 4000, CEO message 4000. That way nothing typed today starts failing. Fields that a tested pure parser already owns (cleanStyle, parsePreviewPatch, parsePongResult, the settings sub-sanitizers, parseWebhook, checkSubscription, parseRange) are typed z.unknown() in the schema and handed to that parser, so there is one source of truth.\n\n4. Unknown keys. Use z.object, which strips unknown keys as the routes effectively do today, not z.strictObject. Open tabs survive the office's self-update, and the client sends spread nested objects.\n\n5. Order:\n   - PR1: helper plus a merge method enum. This closes the flag injection.\n   - PR2: agent and team-change routes.\n   - PR3: settings and setup.\n   - PR4: GitHub/disk identifiers and issues.\n   - PR5: the rest, only when touched.\n   PR2-PR4 are independent once PR1 lands.\n\nEvery rule that depends on state stays in Swarm: 404/409 on requests, the floor cap, CLI installed, box+opencode, assign's busy/deps/holder checks, the settings clamps and cross-field rules, doctor per-finding fixes, demo-only gates, sendBackPatch, checkCloseIssue and progress rules.\n\nConflict for the owner to confirm: D-004 says \"zod at the route\", while the codebase's established pattern is tested lenient sanitizers that silently drop bad values. Some of those sanitizers also clean old state files (shared/looks.ts:42-45). My suggested resolution is zod on the outside for shape and the sanitizer on the inside for rules. That turns some silent drops into 400s, which matches your rule 12 (\"fail visibly\").",
+   "options": [
+    {
+     "name": "Fix the gaps first, zod at the route, one PR at a time (recommended)",
+     "pros": "Closes the merge flag injection and the 500s first. Small diffs that merge cleanly in parallel. Reuses the helper that already exists and the tested parsers. No new dependency and no demo.ts changes (no new Backend methods). Matches D-004's 'new and touched routes'.",
+     "cons": "Two styles live side by side for a while (inline vs restInput.ts, zod vs hand checks). Routes that are never touched stay hand-validated."
+    },
+    {
+     "name": "Big-bang: a zod schema for all 75 manager routes at once",
+     "pros": "One consistent convention right away. Every request shape is documented in one place.",
+     "cons": "A large diff in index.ts plus a big test file that conflicts with upstream syncs and parallel PRs (CLAUDE.md asks for small, on-topic diffs). It duplicates or replaces tested parsers (parseWebhook, parsePongResult, parseRange, cleanStyle), with a real risk of changing behavior. Most of the added safety lands on routes that are already fine."
+    },
+    {
+     "name": "Zod at the Swarm method boundary instead of the route",
+     "pros": "One guard covers both REST callers and internal callers (the CEO tools, the doctor). The fix sits where all callers already go through.",
+     "cons": "Contradicts D-004 ('at the route'). Swarm methods are called with typed arguments from internal code and tests, so parsing unknown input there means a big signature churn in swarm.ts, a 5000+ line file that upstream changes constantly."
+    },
+    {
+     "name": "Shared request schemas in shared/ (client and server infer the same types)",
+     "pros": "One source for request types. The client's api.ts types could be inferred from the schemas.",
+     "cons": "The client imports shared/outside, notify and cloud at runtime (store.ts:5-7), so zod would land in the browser bundle, including pocket mode, which is careful not to download heavy code. The client already keeps its own request types in api.ts. No sharing need exists yet (YAGNI)."
+    }
+   ],
+   "facts": [
+    {
+     "claim": "server/index.ts is the only module that registers routes: 78 /api registrations (51 POST, 13 GET, 6 DELETE, 4 PUT, 3 PATCH, 1 ALL). There is no express.Router in server/.",
+     "source": "Grep of app./router. registrations in server/, plus a node regex count over server/index.ts",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The merge route passes req.body.method to Swarm unvalidated, and github.ts builds the gh flag from it as `--${method}`. So any gh pr merge flag can be injected (for example --admin, --auto, --disable-auto, --body-file=<path>).",
+     "source": "server/index.ts:161; server/swarm.ts:1921-1924; server/github.ts:206-208; gh 2.103.3 `gh pr merge --help` flag list",
+     "confidence": "verified"
+    },
+    {
+     "claim": "That an injected `--admin` (with no merge method) actually merges or bypasses a merge queue at runtime was not tested. gh's help text says merge-queue branches need no merge strategy and that --admin bypasses the queue.",
+     "source": "gh pr merge --help (gh 2.103.3)",
+     "confidence": "unverified"
+    },
+    {
+     "claim": "A zod parse helper already exists in index.ts. It throws HttpError(400) with issues joined as 'path: message; ...' and uses 'request' when the problem is the whole body.",
+     "source": "server/index.ts:199-203",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Routes that already use zod: voice key, cloud key, cloud token, voice messages (params+query), voice sample, voice standup, and the PR send-back note through parseSendBackNote. The CEO MCP tools also use zod schemas, including EFFORT and CLI enums.",
+     "source": "server/index.ts:210-258; server/sendBack.ts:12-19; server/sendBack.test.ts:68; server/ceo.ts:54-55,75-160",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Error contract: HttpError(status, message) makes the error middleware answer {error}. body-parser 4xx errors keep their own status. Anything else is a console-logged 500. The client toasts data.error.",
+     "source": "server/httpError.ts:1-9; server/index.ts:328-335; client/src/api.ts:20-23",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Under Express 5.2.1 / body-parser 2.3.0, req.body is set to undefined and parsing is skipped when a request has no JSON body. So routes that read req.body.x without optional chaining throw a TypeError (500) instead of returning a 400.",
+     "source": "node_modules/body-parser/lib/read.js:46-55; node_modules/express/package.json:4; server/index.ts:66,68,72,88-93,100-104,115,169-175,182,185,287",
+     "confidence": "verified"
+    },
+    {
+     "claim": "PATCH /api/agents/:id passes the raw body to updateAgent. A non-string name crashes with 'patch.name?.trim is not a function' (500). The model string is stored with only String() and trim().",
+     "source": "server/index.ts:180; server/swarm.ts:2520,2532,2540",
+     "confidence": "verified"
+    },
+    {
+     "claim": "An agent's model string becomes a separate argv value after --model / -m on the CLI command line, with no length or character check on the way in from REST.",
+     "source": "server/clis.ts:203,249,302; server/index.ts:173; server/swarm.ts:2540",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Whether a model value starting with '-' would be read as a flag by the Claude Code, Codex or OpenCode argument parsers was not tested.",
+     "source": "not checked; would need running the CLIs with crafted args",
+     "confidence": "unverified"
+    },
+    {
+     "claim": "PATCH /api/settings uses lenient sanitize-and-clamp logic in Swarm: invalid enum values are silently ignored, numbers are clamped, nested objects go to sanitizers (voiceSettings, themeSettings, weatherSettings, worldEventSettings, listenSettings, notifySettings, cloudSettings). There are cross-field rules too: defaultModel follows defaultCli, notify.officeUrl gets a 400, and machineKind 'box' needs a saved key or it gets a 400.",
+     "source": "server/swarm.ts:3704-3757; server/voice.ts:68,85; shared/themes.ts:52; shared/outside.ts:65,74; shared/notify.ts:26,40; shared/cloud.ts:26",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The client imports shared/outside, shared/notify and shared/cloud at runtime, plus shared/looks, progress, themes and pong in UI files. Zod schemas in those modules would therefore end up in the browser bundle. No client file imports zod today.",
+     "source": "client/src/store.ts:5-7; client/src/ui/AgentSettings.tsx:5; client/src/ui/Catalogue.tsx:4; grep \"from 'zod'\" finds only server/ceo.ts, server/index.ts and server/sendBack.ts",
+     "confidence": "verified"
+    },
+    {
+     "claim": "cleanStyle is used both for request bodies and for old state files, so it must stay as the inner sanitizer.",
+     "source": "shared/looks.ts:42-46",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Keystrokes do not go through REST. /ws/term messages are JSON-parsed in a try block, input is type-checked and cut to 64 KB, and resize is clamped. /ws watch messages go through parseWatch.",
+     "source": "server/terminal.ts:160-175,167-168,102-104; server/outbox.ts:116-124; server/swarm.ts:476-482",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Messages to agents have no length cap. Messages to the CEO are trimmed to 4000 chars. The manager's create-issue route has no title or body caps, while the CEO's create tool caps the title at 120 and the body at 6000.",
+     "source": "server/swarm.ts:3681-3690,4415-4417,1910-1913; server/ceo.ts:132-133",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The connectRepo fullName and the github/repos owner query reach gh argv unchecked, so a value starting with '-' would be read as a flag. Both are read-only gh calls.",
+     "source": "server/index.ts:63,68; server/github.ts:26-28,41-45",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Webhook secrets and push subscriptions already go through tested hand parsers that throw HttpError(400).",
+     "source": "server/notify.ts:137-147; server/webPush.ts:41; server/notifier.ts:167-197",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Installed zod is 4.6.5. The prior audit's mcp-input-bounds item (fork rosariomoscato/droidsembly) raises the minimum to ^4.6.7 and bounds the size and nesting of the MCP body.",
+     "source": "node -p require('./node_modules/zod/package.json').version; .ai-factory/research/upstream-fork-audit/features.json:273-304",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The working tree's CLAUDE.md already states the D-004 rule but is uncommitted. Upstream's wording was 'Validate request bodies by hand at the route or in the swarm.'",
+     "source": "git diff CLAUDE.md; CLAUDE.md:200-202",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The manual merge route calls backend.mergePull directly. It does not go through mergeStep, QA status or any merge gate.",
+     "source": "server/swarm.ts:1921-1930 vs the auto-merge path at server/swarm.ts:1594-1633",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The server binds 127.0.0.1 by default. With --host it listens on the LAN with no sign-in. The REST API has no authentication.",
+     "source": "server/config.ts:9; server/index.ts:360-363",
+     "confidence": "verified"
+    },
+    {
+     "claim": "No fork was checked for existing route-level zod work. Running git grep across the partial clones would have lazily fetched blobs, so it was stopped.",
+     "source": "background task bpqm4poja stopped with no output",
+     "confidence": "unverified"
+    },
+    {
+     "claim": "GitHub caps issue titles at 256 characters and issue bodies at 65536.",
+     "source": "general knowledge; not checked against GitHub docs in this run",
+     "confidence": "unverified"
+    }
+   ],
+   "plan_items": [
+    {
+     "title": "fix(server): validate the merge method with zod and share the parse helper",
+     "scope": "Move parse<T>(schema, value) from index.ts:199-203, unchanged, into a new server/restInput.ts and import it in index.ts; the existing inline zod routes keep their schemas. Add mergeBody = z.object({ method: z.enum(['squash','merge','rebase']).default('squash') }) and use parse(mergeBody, req.body ?? {}) at index.ts:161. The zod output type now matches the typed Swarm/Backend parameter, so no sink guard in github.ts is needed. Commit the already-edited CLAUDE.md:200-202 rule in the same PR. About 15 prod lines.",
+     "effort": "S",
+     "files": [
+      "server/restInput.ts",
+      "server/restInput.test.ts",
+      "server/index.ts",
+      "CLAUDE.md"
+     ],
+     "tests": "restInput.test.ts: parse throws HttpError with status 400 and a 'method: ...' message; parse of undefined against a required-field object gives 400 with 'request: ...', not a TypeError; mergeBody defaults to squash, accepts merge and rebase, refuses 'admin', 'disable-auto' and 'body-file=x'. Then typecheck, test, build.",
+     "depends_on": []
+    },
+    {
+     "title": "fix(server): zod schemas for agent and team-change routes",
+     "scope": "Schemas in restInput.ts for hire (index.ts:165-178), PATCH agents/:id (:180), assign (:182), message (:185), approve (:290-302) and reject (:303). Shared agentSetup fields: name string max 200; cli is the CLI enum or ''; model string max 200 with no whitespace and no leading '-'; effort is the EFFORT enum or ''; host is 'local', 'box' or ''; look is 'feminine' or 'masculine'. PATCH also takes color and hair strings and style as z.unknown() (cleanStyle stays the sanitizer). assign: issueNumber int > 0, note string, waitForDeps boolean. message: text min 1, max 65536 (matching the terminal input cap). Reuse ceo.ts EFFORT/CLI by exporting them (ceo.ts:54-55) instead of a fourth copy. Rules that stay in Swarm: CEO/busy/deps/holder/404/409 (swarm.ts:2645-2656), floor cap (2141), CLI installed and box+opencode (2150, 2523-2526), pending check (5125-5126, 5167-5168), name slice 24, note slice 400. About 40 prod lines.",
+     "effort": "S",
+     "files": [
+      "server/restInput.ts",
+      "server/restInput.test.ts",
+      "server/index.ts",
+      "server/ceo.ts"
+     ],
+     "tests": "A non-string name is refused with 400 (today 500 at swarm.ts:2532); '' is accepted for cli, effort and host (the client's 'office default'); a model containing a space or starting with '-' is refused, while 'ollama/qwen3:8b'-style ids pass; assign with no body gives 400; message over the cap is refused.",
+     "depends_on": [
+      "fix(server): validate the merge method with zod and share the parse helper"
+     ]
+    },
+    {
+     "title": "fix(server): zod schemas for settings and setup",
+     "scope": "Settings schema for PATCH /api/settings (:196): top-level scalars typed. Numbers: sessionLimit, maxAgents, ceoHeartbeatMin, tutorialStep, pacingSessions, trimIdleDesksMin. Enums: defaultCli, defaultEffort, runtime, scaling. Strings with abuse caps: defaultModel, managerName, companyName, dogName, projectsDir. Booleans: setupDone, autoUpdate. The nested voice, themes, weather, worldEvents, listen, notify and cloud are z.unknown().optional(), passed on to their sanitizers. Setup schema for :84-96. All clamps and cross-field rules stay in updateSettings. Behavior change to state in the PR: wrong types or enum values now get a 400 instead of being silently ignored. About 35 prod lines.",
+     "effort": "M",
+     "files": [
+      "server/restInput.ts",
+      "server/restInput.test.ts",
+      "server/index.ts"
+     ],
+     "tests": "Every payload the client sends today passes: ManagerConsole.tsx:88 and :624, CloudSettings.tsx:188, NotifySettings.tsx:266, OutsideSettings.tsx:42-43, ThemeSettings.tsx:16, VoiceSettings.tsx:319 and :398, mic.ts:534, ProjectPicker.tsx:80, SetupWizard.tsx:68, Tutorial.tsx:133. defaultEffort 'bogus' and maxAgents 'x' get a 400. Unknown top-level keys are stripped, not rejected.",
+     "depends_on": [
+      "fix(server): validate the merge method with zod and share the parse helper"
+     ]
+    },
+    {
+     "title": "fix(server): zod schemas for repo, folder and issue routes",
+     "scope": "github/repos owner query (:63). POST repos fullName (:68) must match an owner/repo shape that cannot start with '-'. folders/connect and folders/publish (:72-83): path a non-empty string, visibility enum defaulting to private, name and description strings. repos/new (:97-107): name format check stays in Swarm at swarm.ts:1460 and is not duplicated. issues (:112-117): title min 1 with an abuse cap, body max 65536, assignTo optional string. plan (:119): mission optional string. The shared floorOptions (:66) becomes one schema fragment. About 40 prod lines.",
+     "effort": "S",
+     "files": [
+      "server/restInput.ts",
+      "server/restInput.test.ts",
+      "server/index.ts"
+     ],
+     "tests": "fullName '--help' and 'a/b/c' are refused; owner '-x' is refused; a missing body on POST repos and issues gives 400 instead of 500; visibility 'internal' is refused, not silently made private.",
+     "depends_on": [
+      "fix(server): validate the merge method with zod and share the parse helper"
+     ]
+    },
+    {
+     "title": "refactor(server): move the remaining hand-checked routes to zod, only when touched",
+     "scope": "Only when another PR touches these routes: office/update, usage/simulate, doctor fix/ignore/demo, demo/proposals, progress coffee/demo, decor buy/place, pong, previews (watch, sync, preview, pr-previews), notify test and push devices, ceo/message, phone/read. The route checks enums and types; the existing parsers stay the inner check (parsePongResult, placeDecor/buyDecor, parseWebhook, checkSubscription, parseRange). Demo-only gates (403/404) and doctorFix's per-finding fixes stay in Swarm. Not scheduled on its own.",
+     "effort": "S",
+     "files": [
+      "server/restInput.ts",
+      "server/restInput.test.ts",
+      "server/index.ts"
+     ],
+     "tests": "Per touched route: one refused bad shape and one accepted client payload.",
+     "depends_on": [
+      "fix(server): validate the merge method with zod and share the parse helper"
+     ]
+    }
+   ],
+   "open_risks": [
+    "Zod does not enforce 'no merging by agents' (D-005). The REST API has no authentication, and agents run unsandboxed on the same machine with the office's URL in their hook config, so an agent could POST /api/repos/:repo/pulls/:n/merge itself. With --host, anyone on the LAN can too (index.ts:360-363). This needs a D-005 item, for example a manager-only token or an origin check. That agents know the URL is likely; it was not tested.",
+    "Possible CSRF: body-less POSTs are 'simple' cross-site requests. POST /api/repos/<id>/pulls/<n>/merge with no body defaults to squash. Whether current browsers' local-network protections block this was not tested. The fix (an Origin or custom-header check) is outside zod.",
+    "ADR-007 open point: the manager's manual merge (swarm.ts:1921-1930) skips mergeStep and every gate. Decide whether manual merges must honor the new typed refusal reasons.",
+    "Behavior change: lenient silent-ignore becomes a 400. Tabs left open across an office self-update may send values the new server rejects. Using z.object (strip) instead of strictObject keeps that risk small.",
+    "The effort enum is defined in three places (swarm.ts:311, ceo.ts:54, the client types). Reusing ceo.ts's zod enum in the routes avoids a fourth copy, but swarm.ts's EFFORTS array can still drift.",
+    "D-001 (OpenCode 2.x only) may change how local model ids look (the #311 ollama/, lmstudio/ and similar paths). Keep the model regex permissive and revisit it with the OpenCode migration.",
+    "D-005 hooks: handleHook answers {} for a bad body (cliRunner.ts handleHook). Once PreToolUse enforces rules, a malformed body must deny, not fall through. That is outside D-004 but on the same boundary.",
+    "Whether CLI parsers treat a model value starting with '-' as a flag is unverified; the planned regex refuses a leading '-' anyway.",
+    "The GitHub title (256) and body (65536) limits used for the issue caps are unverified. Choose caps at or above GitHub's real limits so manager input is never refused before GitHub would refuse it.",
+    "No fork was checked for existing route-level zod work (the partial-clone grep was stopped). An already-built fork version might exist."
+   ]
+  },
+  "verification": null
+ },
+ "storage-identity": {
+  "research": {
+   "summary": "ADR-006: the workflow MVP needs little from storage: per-run event logs with idempotency keys, immutable hashed artifacts, append-only approvals, one writer process and low volume. Node 22 can't provide this cleanly with node:sqlite. In the 22.x line it is unflagged since 22.13.0 but still Stability 1.1 \"Active development\", and it only became a release candidate without the warning in 24.15.0. Its class was renamed DatabaseSync -> Database in 26.11.0. Native drivers bring Windows build risk to `npx cubefarm`. Append-only JSONL matches the codebase's existing persistence (temp+rename JSON and NDJSON) and needs no engines change. Hosted mode will want Postgres anyway, behind the same WorkflowStore port.\n\nADR-008: today nothing protects any mutating route or websocket. There are no Host, Origin or Sec-Fetch checks. /ws/term types into agent CLIs. Local agents get the office URL in their hook config and can POST /api/requests/:id/approve or /api/repos/:repo/pulls/:n/merge with curl. #310 serves agent-built preview apps under /preview/<port>/ on the office's own origin, so no browser-side check can tell them apart from the manager's UI. Also, the manual merge path does not bind to the head SHA the manager saw.\n\nRecommendation: record a local-manager attestation from a paired device. Bind each approval to the subject hash (artifact sha256 or PR head SHA) and to the run's pinned definition hash, with compare-and-set on approve and a re-check in the merge gate. Protect the endpoint with three things: a ported request boundary, a hashed-at-rest device credential, and moving the preview gateway to its own origin. On native Windows, which is the primary platform, agents run unsandboxed as the same OS user with the manager's gh login. Local approvals there are an attestation, not a security boundary, until D-005 enforcement lands.",
+   "recommendation": "ADR-006: choose (c), append-only JSONL. Use one file per run at <SWARM_HOME>/workflows/runs/<runId>.jsonl (a demo- prefixed folder in demo mode, like config.ts:48). Each line is an event { seq, at, type, key }. Idempotency keys are unique per run and indexed in memory at load, uncapped (ledger.ts caps its `seen` keys at 600, which would not be safe for external side effects). Append with fs.open('a') and write. fsync (FileHandle.sync) intent and approval events before any external side effect. On load, a torn last line is truncated and logged. A bad line in the middle marks the run corrupt and the UI shows it, so nothing is skipped silently. Artifacts are immutable files named by their sha256, written through journal.ts's writeAtomic (export it, don't copy it). Keep the WorkflowStore type from ARCHITECTURE.md but ship only jsonStore.ts: no sqliteStore.ts. Demo mode uses the same store, so no fake is needed. Backup and export means copying the folder. Engines change: none. Keep \"node\": \">=22\" (package.json:31-33) and MIN_NODE = 22 (bin/cubefarm.js:12). If node:sqlite is ever chosen, it needs \"node\": \">=24.15.0\" (release candidate, no warning) plus a minor-version check in bin/cubefarm.js:49. \">=22.13.0\" also works but accepts an experimental API with a warning on 22.x. Revisit when hosted mode arrives (add a Postgres adapter, not SQLite) or when the 2D dashboard (D-002) needs cross-run queries that an in-memory index can't serve.\n\nADR-008:\n(1) Identity: actor = { kind: 'manager', deviceId, channel: 'desktop' | 'pocket' } | { kind: 'auto', rule }, with attestation 'local-manager' (D-003). No usernames or IPs. This extends today's decidedBy 'manager' | 'auto' (shared/types.ts:566).\n(2) Binding: subject = { artifact sha256 } | { repo, pr, headSha } | { teamChangeId }, plus runId, stageRunId and definitionHash. The run's pinned definition hash is the policy version, so there is no separate counter. The approve body carries the hash or SHA the UI showed, and the server answers 409 if it no longer matches. The merge gate (mergeStep, server/mergeGate.ts:43) re-checks before merging and refuses with approval_missing or approval_stale (ADR-007). The merge then passes the approved SHA to gh --match-head-commit (github.ts:208). Fix the manual merge path to do the same (swarm.ts:1921-1924 passes no SHA today). Approvals are append-only events in the run log and single-use.\n(3) Protection, in three parts:\n(a) Port-adapt localloop-pro's request boundary to HTTP, /ws and /ws/term. Allowlist = loopback + HOST interfaces + the officeUrl host + the Vite port in dev. On unsafe methods, require Sec-Fetch-Site same-origin (refuse same-site: other loopback ports count as same-site) and a matching Origin when present. Also require a custom X-Cubefarm-Request header (client api.ts:16 and mic.ts:457 add it). /api/hooks|mcp/:token stay exempt. Send frame-ancestors 'self'.\n(b) Require a manager device credential on every unsafe /api route and on /ws/term input. Pairing uses a one-time alphanumeric code opened by bin/cubefarm.js / scripts/office.mjs as #pair=… and printed on the console. Other devices pair from Settings -> Devices. The result is an HttpOnly SameSite=Strict cookie, and secrets.json stores only its sha256.\n(c) Move the #310 gateway to its own listener and port (opt-in SWARM_PREVIEW_PORT), so preview code is cross-origin to the office. Tailscale users serve that port too.\nLater, for hosted mode: OIDC user id and role replace the device. RBAC with approver ≠ author, and agents' service identities can never approve. Previews move to a separate registrable domain, because cookies are not isolated by port. Optional WebAuthn step-up on merge approvals. Agents get a separate least-privilege GitHub identity behind a ruleset that restricts default-branch updates.",
+   "options": [
+    {
+     "name": "ADR-006 (a) node:sqlite (built-in)",
+     "pros": "No dependency or native build: it ships inside Node. Real SQL transactions (exec BEGIN/COMMIT, isTransaction), UNIQUE constraints and sqlite.backup() (22.16.0+). esbuild (node: prefix external on platform node) and Vitest 5 / Vite 8.3.1 (node:sqlite kept as a prefixed builtin) already handle the import.",
+     "cons": "In the supported 22.x line it is Stability 1.1 with the experimental warning. A clean floor is >=24.15.0, which drops Node 22 LTS users of an npm package. The API is still moving: DatabaseSync was renamed to Database in 26.11.0 (DEP0210). Hosted mode will not use SQLite, so this is an intermediate store. The local dev machine runs Node 20.13.1, which has no node:sqlite at all."
+    },
+    {
+     "name": "ADR-006 (b) better-sqlite3 or another native driver",
+     "pros": "Mature, fast and synchronous, with full SQLite features and backups. Works on Node 22.",
+     "cons": "It is a native addon. A missing prebuild means a node-gyp build that needs Visual Studio and Python on Windows, and node-gyp can mis-handle spaces in paths. That is a new failure mode for `npx cubefarm`. It is only tested with currently supported Node versions, so every Node major is an install risk. A second native dependency on top of @lydell/node-pty."
+    },
+    {
+     "name": "ADR-006 (c) append-only JSONL plus temp+rename artifacts (recommended)",
+     "pros": "It is the codebase's own convention (state.json, journal NDJSON, secrets.json). No engines change and no bundle impact. Works the same on Windows, macOS and Linux. Human-readable and diffable, and backup or export means copying the folder. Fits event-sourced runs with one writer process. Demo mode needs no fake.",
+     "cons": "No multi-file transactions: atomicity is per run file only. Cross-run uniqueness and queries are in-memory indexes rebuilt at startup. You have to write torn-tail handling and fsync rules yourself. Grows without bound until finished runs are archived. Two offices on one SWARM_HOME would interleave appends (state.json already has the same risk)."
+    },
+    {
+     "name": "ADR-006 (d) PGlite (WASM Postgres)",
+     "pros": "Postgres SQL locally, which would carry over to a hosted Postgres. Runs in Node and persists to the filesystem.",
+     "cons": "Under 3 MB gzipped of WASM plus startup cost for a few runs a day. Single-connection behavior is unverified. A new heavy dependency, and overkill for D-003's local single-user MVP."
+    },
+    {
+     "name": "ADR-008 (i) request boundary only (Host, Origin, Sec-Fetch, custom header)",
+     "pros": "Small and well understood (OWASP). Closes cross-site CSRF, DNS rebinding and cross-site websocket hijacking of /ws/term. A tested implementation already exists in the localloop-pro fork.",
+     "cons": "Does nothing against same-origin preview pages (#310 gateway) or local agents using curl, which can forge any header. Approvals stay unauthenticated."
+    },
+    {
+     "name": "ADR-008 (ii) boundary + paired-device credential + preview gateway on its own origin + subject-hash binding (recommended)",
+     "pros": "Approvals record which paired device approved which exact hash or SHA. A prompt-injected agent can't approve or merge through the documented API, and preview code becomes cross-origin. Maps directly onto hosted mode later: device becomes an OIDC user.",
+     "cons": "Pairing UX for every new browser or phone. Tailscale users have to serve a second port for previews. On native Windows a same-user agent could still steal the browser's cookie store, so it is attestation, not a hard boundary, without D-005 isolation."
+    },
+    {
+     "name": "ADR-008 (iii) (ii) + WebAuthn user-verified step-up on merge approvals",
+     "pros": "The only local option that needs a human gesture (Windows Hello or a passkey). A challenge that carries the subject hash defeats same-origin pages, stolen cookies and agents. It is the natural hosted-mode control.",
+     "cons": "Needs a secure context: works on localhost and Tailscale HTTPS, not on plain-HTTP --host LAN access. Needs a verification library or delicate CBOR/COSE code. More UX friction. Better deferred until (ii) ships and hosted mode starts."
+    }
+   ],
+   "facts": [
+    {
+     "claim": "node:sqlite was added in v22.5.0 behind --experimental-sqlite. It has not been behind the flag since v22.13.0 / v23.4.0 but is 'still experimental'. The v22 docs (v22.23.5) show Stability 1.1 Active development and the class DatabaseSync.",
+     "source": "https://nodejs.org/docs/latest-v22.x/api/sqlite.html",
+     "confidence": "verified"
+    },
+    {
+     "claim": "node:sqlite became a release candidate (Stability 1.2) in v24.15.0 and v25.7.0",
+     "source": "https://nodejs.org/docs/latest-v24.x/api/sqlite.html ; https://nodejs.org/api/sqlite.html",
+     "confidence": "verified"
+    },
+    {
+     "claim": "PR #61262 'sqlite: mark as release candidate' removes the experimental warning. It shipped in 24.15.0. Node 22.x presumably still prints ExperimentalWarning because its docs still show 1.1 and no v22 backport is listed.",
+     "source": "https://github.com/nodejs/node/pull/61262",
+     "confidence": "likely"
+    },
+    {
+     "claim": "In v26.11.0 the DatabaseSync class was renamed to Database. DatabaseSync is kept as a deprecated alias (DEP0210, documentation-only).",
+     "source": "https://nodejs.org/api/deprecations.html#dep0210-sqlitedatabasesync",
+     "confidence": "verified"
+    },
+    {
+     "claim": "node:sqlite has no dedicated transaction API. Transactions run as SQL through database.exec(), and database.isTransaction reports state. sqlite.backup() exists since v22.16.0 / v23.8.0.",
+     "source": "https://nodejs.org/api/sqlite.html ; https://nodejs.org/docs/latest-v22.x/api/sqlite.html",
+     "confidence": "verified"
+    },
+    {
+     "claim": "node:sqlite is compiled into the Node binary, so it needs no native addon build on Windows, macOS or Linux",
+     "source": "https://nodejs.org/api/sqlite.html (built-in module, no install step)",
+     "confidence": "likely"
+    },
+    {
+     "claim": "esbuild marks built-in node modules as external on platform 'node'. Any node:-prefixed import is treated as external on platform node since esbuild 0.12.16. The repo uses esbuild 0.28.2.",
+     "source": "https://esbuild.github.io/api/#platform ; https://newreleases.io/project/npm/esbuild/release/0.12.16 ; node_modules/esbuild/package.json:3",
+     "confidence": "likely"
+    },
+    {
+     "claim": "The server bundle uses platform node, format esm, target node22 and packages 'external' (dependencies stay external)",
+     "source": "scripts/build-server.mjs:12-23",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Vite 8.3.1 (under Vitest 5.0.2) keeps node:sqlite as a prefixed builtin, and @types/node 26.6.3 ships sqlite.d.ts",
+     "source": "node_modules/vite/dist/node/module-runner.js:351-357 ; node_modules/@types/node/sqlite.d.ts",
+     "confidence": "verified"
+    },
+    {
+     "claim": "package.json engines is node >=22. The launcher checks only the major version (MIN_NODE = 22).",
+     "source": "package.json:31-33 ; bin/cubefarm.js:12,49",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The Node on this machine is v20.13.1. That is below engines >=22 and has no node:sqlite.",
+     "source": "`node --version` output",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Swarm state is debounced 1.5 s and written whole as JSON via state.json.tmp + rename, with no EPERM/EBUSY retry",
+     "source": "server/swarm.ts:1279-1301",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The journal keeps NDJSON files per 10-minute keyframe, rewritten whole every 30 s through writeAtomic. writeAtomic retries rename on EPERM/EBUSY/EACCES and is not exported.",
+     "source": "server/journal.ts:1-6, 97-112",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The ledger lives inside state.json (Swarm state field `progress`) and is idempotent through `seen` keys capped at SEEN_KEEP = 600",
+     "source": "server/swarm.ts:224 ; server/ledger.ts:51, 97, 118-120",
+     "confidence": "verified"
+    },
+    {
+     "claim": "secrets.json is written with mode 0o600 via temp + rename",
+     "source": "server/secrets.ts:25-26",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The architecture forbids storing workflow runs as fields inside state.json",
+     "source": ".ai-factory/ARCHITECTURE.md:170",
+     "confidence": "verified"
+    },
+    {
+     "claim": "better-sqlite3 is only tested with currently supported Node versions. Windows builds need Visual Studio and Python, and node-gyp may not escape spaces in paths.",
+     "source": "https://github.com/WiseLibs/better-sqlite3/blob/master/docs/troubleshooting.md",
+     "confidence": "verified"
+    },
+    {
+     "claim": "PGlite is under 3 MB gzipped, runs in Node and can persist to the filesystem",
+     "source": "https://pglite.dev/docs/about",
+     "confidence": "verified"
+    },
+    {
+     "claim": "No Host, Origin or Sec-Fetch check exists on REST routes. express.json applies to all of /api after the gateway and the token callbacks.",
+     "source": "server/index.ts:35-41",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Websocket upgrades for /ws and /ws/term have no Origin check, and /ws/term 'input' messages are written straight to the running CLI",
+     "source": "server/index.ts:346-351 ; server/terminal.ts:149-169",
+     "confidence": "verified"
+    },
+    {
+     "claim": "POST /api/requests/:id/approve|reject call Swarm.approveRequest/rejectRequest. Requests record decidedBy 'manager' | 'auto' and decidedAt, and nothing binds them except the pending status.",
+     "source": "server/index.ts:290-303 ; server/swarm.ts:5111-5172 ; shared/types.ts:547-568",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Auto-merge passes the tested SHA (passedSha ?? headSha) to gh pr merge --match-head-commit. The manager's manual merge route passes no SHA, so it merges whatever head is current.",
+     "source": "server/swarm.ts:1633 ; server/github.ts:206-208 ; server/index.ts:161 ; server/swarm.ts:1921-1924",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Pocket mode's Approvals merge button calls api.mergePull after a confirm dialog that shows the title but no SHA",
+     "source": "client/src/pocket/PocketApprovals.tsx:29-35",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The #310 gateway serves preview apps under /preview/<port>/ on the office's own origin. Its service worker ignores navigations, and escapedTo only redirects GET, so a preview page's form POST or a fetch made after unregistering the worker reaches /api as same-origin.",
+     "source": "server/previewGateway.ts:5-11, 80, 97-99, 117-133",
+     "confidence": "likely"
+    },
+    {
+     "claim": "Local agents get the office URL in their CLI config (the hook URL and the CEO's MCP URL)",
+     "source": "server/cliRunner.ts:821, 850",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The office's workflow rules (no pushes to the default branch, no merging) are in agent prompts, not enforced. The project CLAUDE.md still says not to add hooks, permission rules or sandboxes that refuse tool calls.",
+     "source": "CLAUDE.md SAFETY section (project instructions)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The Claude Code sandbox covers shell commands only. Hooks, MCP servers and file tools run outside it. Sandboxed commands can't reach localhost servers by default. Reads of credential files are allowed by default. On native Windows commands run unsandboxed.",
+     "source": "https://code.claude.com/docs/en/sandboxing",
+     "confidence": "verified"
+    },
+    {
+     "claim": "OWASP: reject unsafe methods with Sec-Fetch-Site cross-site, and allow same-site only if siblings are trusted. Verify Origin when present; missing headers or Origin null are not evidence of same origin. Disallowing simple content types or requiring a custom header mitigates CSRF.",
+     "source": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Since Chrome 142, public origins need a Local Network Access permission to reach loopback. Whether that covers WebSockets, and what other browsers do, is not confirmed.",
+     "source": "https://groups.google.com/a/chromium.org/g/blink-dev/c/lRnFRIfzDMU ; https://localtonet.com/blog/chrome-local-network-access-apis-websockets",
+     "confidence": "unverified"
+    },
+    {
+     "claim": "Upstream recommends Tailscale Serve (`tailscale serve --bg 4317`) for phones, and says --host has no sign-in",
+     "source": "docs/pocket.md:88-110",
+     "confidence": "verified"
+    },
+    {
+     "claim": "Tailscale Serve accepts `--https=<port> <target>`. Whether several listeners coexist, and which Host header reaches the office, is not confirmed.",
+     "source": "https://tailscale.com/kb/1242/tailscale-serve",
+     "confidence": "unverified"
+    },
+    {
+     "claim": "The prior audit rates localloop-pro's request boundary as port-adapt: imported as is, it breaks --host, Tailscale Serve and the gateway. It rates mgscox's ws-origin-check as port-adapt and the fork's /api/session token as idea-only. It also flags the gateway's same-origin exposure.",
+     "source": ".ai-factory/research/upstream-fork-audit/verification.json (ids loopback-request-boundary, ws-origin-check) ; features.json (session-token-api-auth)",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The client sends Content-Type application/json only when a body is present. The clip upload is a raw-body POST.",
+     "source": "client/src/api.ts:16 ; server/index.ts:239 ; client/src/ui/mic.ts:457",
+     "confidence": "verified"
+    },
+    {
+     "claim": "On Windows the launcher opens the browser through cmd.exe start, so a pairing code in the URL must avoid cmd metacharacters",
+     "source": "bin/cubefarm.js:200-212",
+     "confidence": "verified"
+    },
+    {
+     "claim": "The CEO's office MCP tools include no approve or merge tool, and the manager merges on floors without auto-merge",
+     "source": "server/ceo.ts:66-170, 262",
+     "confidence": "verified"
+    }
+   ],
+   "plan_items": [
+    {
+     "title": "Record ADR-006 and ADR-008 in ARCHITECTURE.md",
+     "scope": "Add both rows to the Decisions table. Replace 'jsonStore.ts | sqliteStore.ts' with jsonStore.ts and record the revisit triggers: hosted mode gets a Postgres adapter, or cross-run queries outgrow memory. State the identity, binding and protection decisions and that local approvals are attestation-only on native Windows.",
+     "effort": "S",
+     "files": [
+      ".ai-factory/ARCHITECTURE.md"
+     ],
+     "tests": "n/a (docs)"
+    },
+    {
+     "title": "JSONL WorkflowStore adapter",
+     "scope": "server/workflows/store.ts holds the port type. jsonStore.ts writes one append-only file per run under a WORKFLOWS_DIR (demo-prefixed in demo mode, like STATE_FILE). Appends are serialized per run through a promise chain. Idempotency keys are unique per run with an uncapped in-memory index. fsync intent and approval events. At load, truncate and log a torn tail, and mark mid-file corruption as a corrupt run that the UI shows. Build the startup index by scanning runs/*.jsonl. Export journal.ts writeAtomic for reuse.",
+     "effort": "M",
+     "files": [
+      "server/workflows/store.ts",
+      "server/workflows/jsonStore.ts",
+      "server/workflows/jsonStore.test.ts",
+      "server/config.ts",
+      "server/journal.ts"
+     ],
+     "tests": "Vitest on a temp SWARM_HOME: append+reload roundtrip; a duplicate key returns the existing event and writes nothing; a torn last line is truncated and reported; a corrupt middle line gives status corrupt, never a silent skip; ordering under concurrent appends; paths built with path.join (Windows and ubuntu)."
+    },
+    {
+     "title": "Content-hashed artifact store",
+     "scope": "server/workflows/artifacts.ts: put(content) -> sha256 id, written once via writeAtomic and never overwritten; get(id) re-hashes on read and fails loudly on mismatch.",
+     "effort": "S",
+     "depends_on": [
+      "JSONL WorkflowStore adapter"
+     ],
+     "files": [
+      "server/workflows/artifacts.ts",
+      "server/workflows/artifacts.test.ts"
+     ],
+     "tests": "Same content gives the same id; tampered file -> error; no overwrite of an existing hash."
+    },
+    {
+     "title": "Port-adapt the request boundary (HTTP, /ws, /ws/term)",
+     "scope": "Take localloop-pro's server/requestBoundary.ts per the verification.json recipe. Derive the allowed Host/Origin set from HOST (loopback, interfaces, hostname), the officeUrl host (https allowed) and the Vite client port in dev. On unsafe methods: Sec-Fetch-Site must be same-origin when present, Origin must match when present, and the X-Cubefarm-Request header is required. /api/hooks|mcp/:token stay exempt. Websocket upgrades need an allowed Origin. Add Content-Security-Policy frame-ancestors 'self' on office pages. The client adds the header in api.ts call() and mic.ts.",
+     "effort": "M",
+     "files": [
+      "server/requestBoundary.ts",
+      "server/requestBoundary.test.ts",
+      "server/index.ts",
+      "client/src/api.ts",
+      "client/src/ui/mic.ts",
+      "e2e/requestBoundary.spec.ts"
+     ],
+     "tests": "Pure policy table: cross-site POST refused; same-site from 127.0.0.1:6301 refused; missing custom header refused; DNS-rebinding Host refused; Tailscale Serve host allowed when officeUrl is set; hooks/mcp exempt with a live token; WS upgrade with a foreign Origin refused. One e2e spec in demo mode."
+    },
+    {
+     "title": "Manual merge binds to the SHA the manager saw",
+     "scope": "POST /api/repos/:repo/pulls/:n/merge takes expectedHeadSha (zod-validated per D-004). Swarm.mergePull passes it to backend.mergePull (github.ts already does --match-head-commit) and returns 409 when the current head differs. PocketApprovals and the desktop merge send pr.headSha. The demo fake enforces the SHA.",
+     "effort": "S",
+     "files": [
+      "server/index.ts",
+      "server/swarm.ts",
+      "server/demo.ts",
+      "client/src/api.ts",
+      "client/src/pocket/PocketApprovals.tsx"
+     ],
+     "tests": "Swarm/demo test: a mismatched SHA -> 409 and no merge; a matching SHA merges; the backend receives the SHA."
+    },
+    {
+     "title": "Manager device pairing and credential",
+     "scope": "server/managerAuth.ts (pure): one-time alphanumeric pairing codes (at least 8 characters) with a TTL, the active code invalidated after 5 wrong tries and POST /api/pair rate-limited, 32-byte device tokens, sha256 at rest in secrets.json through secrets.ts merged writes, verify and revoke. Routes: POST /api/pair and GET/DELETE /api/devices (zod). Middleware requires the HttpOnly SameSite=Strict cookie on every unsafe /api route except hooks/mcp and POST /api/pair (which checks the one-time code instead), and on /ws/term input. bin/cubefarm.js and scripts/office.mjs open <url>/#pair=<code> and print it. Settings -> Devices pairs a phone with a code or QR and lists and revokes devices. The pocket pairing screen. Demo parity.",
+     "effort": "L",
+     "depends_on": [
+      "Port-adapt the request boundary (HTTP, /ws, /ws/term)"
+     ],
+     "files": [
+      "server/managerAuth.ts",
+      "server/managerAuth.test.ts",
+      "server/secrets.ts",
+      "server/index.ts",
+      "server/terminal.ts",
+      "server/demo.ts",
+      "bin/cubefarm.js",
+      "scripts/office.mjs",
+      "client/src/api.ts",
+      "client/src/pocket/",
+      "client/src/ui/"
+     ],
+     "tests": "secrets.json never holds a raw token; a code works once and expires; a revoked device gets 401; an unsafe route without the cookie gets 401; POST /api/pair with a valid code and no cookie passes the middleware and sets the cookie; after 5 wrong codes the active code is refused; /ws/term input from an unpaired viewer is dropped; e2e pairs through the printed code."
+    },
+    {
+     "title": "Preview gateway on its own origin",
+     "scope": "Serve /preview/* and /preview/sw.js from a second listener on SWARM_PREVIEW_PORT (opt-in), bound to the same HOST. The office port answers 404 for /preview/*. Client links to the gateway use the preview origin. docs/pocket.md adds `tailscale serve --bg --https=<p> <previewPort>`. On the office PC previews keep opening on their own loopback ports. Cookies are scoped by host, not port, so the gateway removes the manager device cookie from the Cookie header it forwards and drops preview Set-Cookie headers that name it, also on WebSocket upgrades through syncProxy.ts tunnel().",
+     "effort": "M",
+     "files": [
+      "server/index.ts",
+      "server/config.ts",
+      "server/previewGateway.ts",
+      "server/syncProxy.ts",
+      "server/syncProxy.test.ts",
+      "client/src/ (gateway URL builder)",
+      "docs/pocket.md"
+     ],
+     "tests": "The office port refuses /preview/; the preview port serves only /preview/; a request from the preview origin to the office /api is refused by the boundary; a forwarded preview request never carries the device cookie; a preview Set-Cookie naming it is dropped; a WebSocket upgrade through the gateway does not carry it; e2e smoke in demo."
+    },
+    {
+     "title": "Approval record, binding and compare-and-set",
+     "scope": "shared/workflows/approval.ts holds the zod schemas: actor { manager deviceId channel | auto rule }, attestation 'local-manager', subject { artifact sha256 | pr repo number headSha | teamChangeId }, runId, stageRunId, definitionHash, decision, note and decidedAt. server/workflows/approvals.ts is pure: isCurrent(approval, facts) and single-use consumption. POST /api/workflows/approvals carries the expected hash or SHA and answers 409 on mismatch. Approvals are appended to the run log. HireRequestView gains an optional decidedByDevice.",
+     "effort": "M",
+     "depends_on": [
+      "JSONL WorkflowStore adapter",
+      "Manager device pairing and credential"
+     ],
+     "files": [
+      "shared/workflows/approval.ts",
+      "server/workflows/approvals.ts",
+      "server/workflows/approvals.test.ts",
+      "server/index.ts",
+      "shared/types.ts"
+     ],
+     "tests": "Stale when headSha, artifact hash or definitionHash changes; 409 on an expected mismatch; an approval can't be reused for a second merge; an auto actor is never accepted where the policy needs a manager."
+    },
+    {
+     "title": "Merge gate refusals for approvals (ADR-007)",
+     "scope": "Extend mergeStep (pure) with approval_missing and approval_stale wait reasons for workflow-opted repos. Auto-merge uses the approved SHA for --match-head-commit. Repos without a workflow config behave as upstream.",
+     "effort": "S",
+     "depends_on": [
+      "Approval record, binding and compare-and-set"
+     ],
+     "files": [
+      "server/mergeGate.ts",
+      "server/mergeGate.test.ts",
+      "server/swarm.ts"
+     ],
+     "tests": "mergeStep returns wait with each refusal reason; a repo with no workflow gives an unchanged result."
+    },
+    {
+     "title": "D-005 enforcement so approvals mean something",
+     "scope": "Claude Code on macOS/Linux/WSL2: sandbox with loopback blocked for the shell (hooks and MCP stay outside it), plus deny rules for gh pr merge and pushes to the default branch. Native Windows: the PreToolUse hook (today it approves every call) denies those commands. Optional: agents use a separate GitHub identity behind a ruleset that restricts updates to the default branch. Needs CLAUDE.md's 'don't add hooks/permission rules/sandboxes' line updated first.",
+     "effort": "L",
+     "depends_on": [
+      "Record ADR-006 and ADR-008 in ARCHITECTURE.md"
+     ],
+     "files": [
+      "server/cliRunner.ts",
+      "server/clis.ts",
+      "server/agentRunner.ts",
+      "CLAUDE.md"
+     ],
+     "tests": "Pure tests on the generated settings and hook decisions per CLI; demo parity."
+    }
+   ],
+   "open_risks": [
+    "On native Windows, the primary platform, the Claude Code sandbox is not available and file tools are never sandboxed. A same-user agent could read the browser profile's cookie store or call the API with a stolen cookie. Local approvals are attestation, not a security boundary, until D-005 isolation exists (WSL2 sandbox, a separate OS user, or a separate GitHub identity).",
+    "Agents can likely merge or push directly with the manager's gh login, which bypasses any office approval. Per CLAUDE.md the rules are prompt-only. Only D-005 deny rules, hooks or sandboxes, or a separate least-privilege GitHub identity with a default-branch ruleset, closes this.",
+    "Conflict to resolve: the project CLAUDE.md still says not to add hooks, permission rules or sandboxes that refuse tool calls, while D-005 asks for them. The owner should decide and update CLAUDE.md before enforcement work starts.",
+    "Not checked against a live Tailscale Serve: which Host header reaches the office, and whether a second `--https=<port>` listener coexists with `tailscale serve --bg 4317`. The boundary allowlist and the separate preview port both depend on this.",
+    "Chrome's Local Network Access prompt (142+) mitigates public-to-loopback requests, but its WebSocket coverage and other browsers' behavior are unverified. Until the boundary ships, any website the manager visits can likely open /ws/term and type into an agent CLI.",
+    "Moving the preview gateway off the office origin breaks 'Open in new tab' for phones over Tailscale until users serve the second port. It needs docs and a UI hint.",
+    "Previews on the office PC keep their own loopback ports and bypass the gateway, so with the office on 127.0.0.1 the device cookie reaches those preview servers too. Closing that needs a design choice: open previews on another host name (such as <port>.localhost) or route them through the gateway.",
+    "JSONL store: two offices on the same SWARM_HOME would interleave appends. state.json has the same risk today, and a lock file was skipped. Startup scan time grows with run count until finished runs are archived.",
+    "If node:sqlite is chosen later, Node 22.x likely still prints ExperimentalWarning and code written against DatabaseSync uses a name deprecated in 26.11.0. The local machine's Node 20.13.1 can't run it, and that version is already below the current engines floor.",
+    "Pairing friction: every new browser, phone or cleared PWA needs a re-pair, and e2e helpers must pair through the printed code."
+   ]
+  },
+  "verification": null
+ }
+}

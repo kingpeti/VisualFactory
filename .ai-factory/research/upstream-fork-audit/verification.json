@@ -1,0 +1,1111 @@
+{
+ "verified": [
+  {
+   "group": "governance-holds",
+   "verdicts": [
+    {
+     "id": "tubadog-merge-holds",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "There are no new external services. It makes one extra `gh api --paginate repos/<r>/pulls/<n>/files` call per PR head SHA, but only on floors that have hold paths. `labels` is added to the `gh pr list --json` fields (PR_FIELDS) and to PullInfo. If prFiles throws, auto-merge does not merge (fail-closed) and retries on the next sync. Existing users see no change because holdPaths defaults to []. The one exception: any open swarm PR that already carries a `swarm:hold` label becomes held. The label hold relies on prompts, not enforcement. Agents are unsandboxed and have gh, so an agent could remove the label. Path holds are enforced by the server, but only against the office's own auto-merge. The manager's Kanban Merge (POST /pulls/:n/merge) deliberately bypasses holds, since that is the approval. The CEO has no merge tool. Holds only act when autoMerge is on (advanceMerges returns early otherwise). After 2698c4c, advanceMerge runs in the same pass right after setHeld has bumped updatedAt. That is harmless because it uses the same fetch. Cosmetic: 2698c4c leaves the old one-line JSDoc stacked above the new one on advanceMerge. The matcher is gitignore-like but has no `!` negation and no character classes.",
+     "verdict": "confirmed",
+     "corrected_recommendation": "cherry-pick",
+     "import_recipe": "From the TubadoG/cubefarm fork: `git cherry-pick 32b3ed8 2698c4c`, in that order. 6dbec0c and c69094a are the pre-squash branch twins of these two, with byte-identical diffs (checked with `git diff`), so do not take them. Both apply on 157efde with zero conflicts (checked in a temp worktree, 16 files, +237/-8). Optional hand-tidy: delete the stale `/** One step toward merging a QA-passed PR... */` line that 2698c4c leaves above the new advanceMerge JSDoc. Optional: tell the CEO system prompt (ceo.ts line ~262, 'On floors with auto-merge on, the office merges a PR by itself') about holds. Land this first. tubadog-routine-only-automerge and tubadog-qa-skip-held-drafts build on it, and it overlaps manager-refinement-after-qa only in client/src/qaCard.ts.",
+     "notes": "Verified: the commits exist on the fork's main (squash merges of PRs #8 and #9) with parents d4af243 and c157110. The fork's merge-base with upstream is d3b47c6, 8 commits behind 157efde. Even so, the pick touches only context those 8 commits left alone; the fork-only Mailer/email imports in swarm.ts are context lines, not dependencies. Every symbol it uses exists upstream: notifier.notify('needsHuman', title, body, line), postMessage, QaRecord extends QaView, HttpError and mergeStep. The only Backend implementers are realBackend and demo; previews.test.ts casts. No 'hold' feature exists upstream (grep for holdPaths/heldFor/prFiles/swarm:hold found nothing, and no similar title in upstream's log). Fork main's later hold code (holdFor/setHeld/advanceMerges) is unchanged since 6d88f91, so no later fixes were missed. Fork main later reuses holdFor for businessHold, which is fork-only and not needed."
+    },
+    {
+     "id": "tubadog-routine-only-automerge",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "conflicts",
+     "conflict_files": [
+      "server/swarm.ts",
+      "server/digest.ts",
+      "server/digest.test.ts",
+      "docs/email.md"
+     ],
+     "tests_included": true,
+     "hidden_risks": "Defaults are flipped for existing users. The loader does `routineOnly: r.routineOnly ?? true` and connectRepo sets `routineOnly: true`, so after an upgrade every auto-merge floor starts holding PRs. That covers any change to package.json or lockfiles (most JS PRs), anything over 400 changed lines, and CI/Docker/infra/auth/secret-ish paths. It also makes every auto-merge floor issue one prFiles gh API call per passed PR head, because holdFor skips the fetch only when holdPaths is empty and routineOnly is off. The rules are hardcoded in shared/holds.ts. The heuristics over-match: `schema.*` catches zod/GraphQL schema files, `auth` any folder named auth, `*secret*`/`*credential*` any such filename, and `deploy`/`infra`/`k8s`/`helm` any folder of that name. Case-insensitive matching on lowercased paths is fine. In the demo, the fake prFiles adds package.json to every third PR, so with this default a demo office holds a third or more of its PRs. The commit also bundles unrelated 'plain-language decision alerts'. Those are server/decision.ts, a 5th `link` argument on Notifier.notify/note, a bigger DECISION_MAX body, ntfy action buttons pointing at `?tab=approvals` (upstream does not support that query), and a rewritten notifyNeedsHuman. They change the text of existing needsHuman notifications for all users. It also modifies the fork-only daily digest (server/digest.ts) and the fork-only email docs (docs/email.md).",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "Do not cherry-pick 6d88f91 or its twin f48a6f1 (identical diff). On 157efde+holds it conflicts in server/swarm.ts (fork-only email/digest imports and a ~215-line fork-only email section) and modify/delete conflicts in server/digest.ts, server/digest.test.ts and docs/email.md. Hand-port only the routine-only subset, after tubadog-merge-holds:\n(1) shared/holds.ts: append the `// ---------- routine work ----------` block (ROUTINE_MAX_LINES, NOT_ROUTINE, ROUTINE_RULES, ROUTINE_RES, notRoutine), and consider taking the rule groups and the line limit from per-floor config.\n(2) shared/holds.test.ts: the `describe('notRoutine')` block and its import.\n(3) shared/types.ts: `RepoView.routineOnly?: boolean`.\n(4) server/swarm.ts:\n- `PersistedRepo.routineOnly`. The loader default must be `r.routineOnly ?? false`, not true, and connectRepo should also default to false.\n- Add the field to the repo view.\n- Add 'routineOnly' to the updateRepo Pick, plus the `if (patch.routineOnly !== undefined)` block.\n- In holdFor, change the early-return condition and the `?? (repo.routineOnly ? notRoutine(...) : null)` tail.\n- Keep upstream's setHeld/notifyNeedsHuman notify calls unchanged.\n(5) client/src/api.ts: `routineOnly?: boolean`. client/src/ui/ManagerConsole.tsx: the toggle, using `repo.routineOnly ?? false`.\n(6) A docs/how-it-works.md line.\nDrop server/decision.ts, server/decision.test.ts, the server/notifier.ts, server/notify.ts and notify.test.ts changes, server/digest*, docs/email.md and docs/pocket.md. Decision alerts could become a separate idea-only item.",
+     "notes": "The original claim of 'import_effort S, conflict_risk low' is wrong for the commit as a whole: it is a 16-file, +392/-42 bundle and roughly two thirds of it is decision alerts and digest work. The routine-only logic itself is small (about 60 lines in holds.ts plus about 15 in swarm.ts) and is a correct port target. The default-ON behavior change flagged by the original agent is confirmed in both the loader and connectRepo. Fork main still has `routineOnly: r.routineOnly ?? true`."
+    },
+    {
+     "id": "tubadog-qa-skip-held-drafts",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "needs-other-feature-first",
+     "conflict_files": [
+      "server/swarm.ts",
+      "server/decision.ts",
+      "server/decision.test.ts"
+     ],
+     "tests_included": true,
+     "hidden_risks": "The fix depends on fork-only concepts. The needs-input issue label does not exist anywhere in upstream (grep finds nothing). The swarm:hold draft placeholder pattern comes from the fork's autonomous-floor/decision-brief workflow (8821a4c, f230120, the floor-lead commits), where a developer opens an empty draft to hold a branch while the manager decides. Upstream agents are never told to do that, so the bug it fixes cannot happen upstream, even with merge holds imported. Upstream reconcilePulls already skips drafts, though a draft can still reach QA via the dev's session end. The predicate only skips draft PRs, so the risk is low, but importing the needs-input half would be dead code. Its context also uses fork-only symbols (`isWorker`, the rebuild.ts/decisionAnswer.ts/decisions.ts imports, and a decision.ts that has accumulated briefAlert/stuckPickView).",
+     "verdict": "downgrade",
+     "corrected_recommendation": "idea-only",
+     "import_recipe": "Do not cherry-pick 5269725. It conflicts standalone and on top of merge holds: server/decision.ts and server/decision.test.ts are modify/delete because the file does not exist upstream, and server/swarm.ts conflicts in imports and in the QA scheduler loop, where upstream uses `a.role !== 'ceo'` and the fork uses `isWorker`. If it is ever wanted, after tubadog-merge-holds hand-write about 5 lines. In Swarm's QA scheduling loop (`for (const rec of waiting('queued', 'qa'))`), skip a rec whose PullInfo `isDraft && labels?.some(l => l.toLowerCase() === HOLD_LABEL)`. Put the predicate in shared/holds.ts next to holdReason, with one test. Leave out the needs-input half unless a needs-input workflow is adopted.",
+     "notes": "The commit is real and does what it says (+38/-2, 3 files, on fork main). Its parent is the floor-lead merge 64904df, so the context belongs to the fork's autonomous-floor stack. Its value is tied to that workflow, not to merge holds alone."
+    },
+    {
+     "id": "manager-refinement-after-qa",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "conflicts",
+     "conflict_files": [
+      "shared/i18n.ts",
+      "docs/agents.md",
+      "docs/FORK_CHANGELOG.md",
+      "client/src/ui/KanbanView.tsx (textually clean, but imports fork-only ../i18n useT)",
+      "client/src/ui/AppViewer.tsx (textually clean, but imports fork-only ../i18n T)"
+     ],
+     "tests_included": true,
+     "hidden_risks": "There are no external calls or secrets, and the CEO gains no new powers. sendBackToDev sets `allowPassed = from === undefined`, and the CEO triage call passes `from` (swarm.ts:4577), so the CEO cannot reopen a passed PR. One other upstream caller passes `from` undefined: doctorFix 'send-back' (swarm.ts:4846). That is a manager action too, and with no note it gets a 400 on a passed PR, so it is safe. Confirming the dialog starts a paid agent fix session even when autoAssign is off, the same as the existing Send back. There is a race on auto-merge floors: if advanceMerges is already merging the passed PR when the manager clicks Request changes, it can still merge. The button sits in 'Ready to merge', so the window is short except on autoMerge-off or held floors. passedSha is deliberately left stale while the record is queued/testing. Merge code only acts on status 'passed', and the next QA pass overwrites it. QA failing a manager round resets fixReason to 'qa' (upstream's runQa outcome), which is fine. `managerRequested` is not added to journal compactQa, so time-lapse replays will not show it. The client hunks need the fork's i18n (`useT`, `<T>`, shared/i18n.ts with Italian strings), which upstream does not have.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "Fetch rosariomoscato/droidsembly 4ac28f4 (on the fork's main and dev; parent 962ce11; merge-base with upstream is exactly 157efde).\n(1) Apply the portable part: `git show 4ac28f4 -- server shared/types.ts client/src/qaCard.ts client/src/qaCard.test.ts | git apply --3way`. A ready-made copy is at C:/Users/peti/AppData/Local/Temp/claude/c968d675ef2f985c/23326b94-69a1-40d9-887d-ac86b5b528d8/scratchpad/verify-wt/rm-4ac28f4-portable.patch. On clean 157efde it applies with no conflicts. It covers server/fixOutcome, prOwnership, qaOutcome, qaPrompt, restartRecovery, sendBack (with tests) and swarm.ts; every fixReason union site upstream is covered.\n(2) Hand-port client/src/ui/KanbanView.tsx: add the 'Request changes' button in the Ready to merge actions and the requested/required-note dialog branch. Replace `t('...')` with the plain English strings and drop the `useT` import.\n(3) Hand-port client/src/ui/AppViewer.tsx: the managerRequested badge without the `<T>` wrapper or import.\n(4) Port the docs/agents.md 'Manager refinements after QA passed' section by hand, resolving the conflict.\n(5) Drop shared/i18n.ts and docs/FORK_CHANGELOG.md.\n(6) Optional: add `managerRequested` to shared/journal.ts compactQa.\nOrder: after tubadog-merge-holds. The only overlap is client/src/qaCard.ts, a one-line conflict in the qaCardNote Pick<> union; resolve it as `'status' | 'round' | 'mergeNote' | 'ceoLooking' | 'heldFor' | 'managerRequested'`. qaCard.test.ts and shared/types.ts merge cleanly.",
+     "notes": "The original claim says the server part applies cleanly; that is confirmed, and the qaCard and types parts apply cleanly too. A full cherry-pick conflicts, and the KanbanView/AppViewer hunks merge textually but would fail typecheck because client/src/i18n does not exist upstream. So this is port-adapt, not cherry-pick. The behavior matches the description: a required note, fixReason 'manager', requestedSha, the old report and passedSha kept, a fresh QA round required, and a retest prompt that does not call the earlier pass a failure. fixOutcome, catchUp and resumeNote all handle 'manager'. Pairs well with merge holds: a held PR on an auto-merge floor stays in Ready to merge, where Request changes is reachable."
+    }
+   ],
+   "cross_feature_conflicts": "Order: tubadog-merge-holds (32b3ed8, then 2698c4c) first. Then manager-refinement-after-qa and the hand-ported routine-only subset, in either order. The QA-skip-held-drafts idea goes last, if at all.\n- merge-holds vs manager-refinement: they overlap only in client/src/qaCard.ts. This is a one-line conflict in the qaCardNote Pick<> union (heldFor vs managerRequested); keep both. client/src/qaCard.test.ts, shared/types.ts (QaView heldFor plus managerRequested) and server/swarm.ts's qaView mapping merge cleanly (checked by applying both in one worktree).\n- routine-only vs merge-holds: hard dependency. It extends holdFor, holdReason's module (shared/holds.ts), PersistedRepo and updateRepo from merge holds. Its commit 6d88f91 cannot be cherry-picked; port only the routineOnly subset, with the default OFF.\n- qa-skip-held-drafts depends on HOLD_LABEL from merge holds and on the fork-only server/decision.ts and needs-input workflow. Without the autonomous-floor stack it has no trigger upstream.\n- All four touch server/swarm.ts, but in different regions: auto-merge loop and holdFor; updateRepo; sendBackToDev and the fix prompt; QA scheduler. Taking them as separate commits keeps conflicts trivial.\n- Duplicate SHAs: 6dbec0c is 32b3ed8, c69094a is 2698c4c, f48a6f1 is 6d88f91 (byte-identical diffs). Take only the main-branch squash commits."
+  },
+  {
+   "group": "merge-gate-security",
+   "verdicts": [
+    {
+     "id": "fail-closed-merge-gate",
+     "exists_as_described": true,
+     "already_upstream": "partially",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "1) An unbounded QA loop that the claim missed. In the auto path, upstream mergeStep still returns 'merge' for checks 'none' and for mergeState BLOCKED/UNSTABLE/HAS_HOOKS. gatedMerge then refuses ('checks-not-passing' / 'merge-state' / 'changes-requested'), and advanceMerge re-queues QA with retests+1. Retests are not counted against MAX_QA_ROUNDS (qaOutcome.ts:28), and QA start has no same-SHA shortcut. So a no-CI repo, a PR whose checks are all skipped (path filters), a branch protection that requires review (BLOCKED) or an unresolved CHANGES_REQUESTED spawns a full QA agent session again and again. Upstream instead merged on 'none' and, for BLOCKED, retried every 10 minutes with a single alert. 2) The manager's override is gone. Swarm.mergePull returns 409 unless QA passed the current head, with checks passing and mergeState CLEAN. The client still offers 'Merge anyway' (client/src/ui/KanbanView.tsx:116-127, client/src/pocket/PocketApprovals.tsx:29-35), and the fork never updated those, so that button always fails. People's own (non-swarm/) PRs can no longer be merged from the office, and no-CI floors can never merge at all. 3) checksOf now reports skipped/neutral-only rollups as 'none' everywhere listPulls is used (Kanban, qaGate), not only in the gate. 4) It adds one extra gh pr view per merge attempt. No new external services, secrets, telemetry, permission flags or CEO shell.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "From the localloop-pro clone, on 157efde: git cherry-pick -n 78c7c3f 5866cc3 a23f894 6b40b90. This applies cleanly and was verified identical to the server/* net diff of origin/codex/integrate-safety-upstream. Files: server/github.ts, server/github.test.ts, server/mergeGate.ts, server/mergeGate.test.ts, server/swarm.ts (gatedMerge plus both callers), server/demo.ts (isDraft/reviewDecision fakes), new server/manualMerge.test.ts. Do NOT take 8f4ba53, 60b526c or 1bd2c4e. They are a second, incompatible design from the fork's main (freshMergeStep/manualMerge plus mergeStep edits) on a base 134 commits old, and they conflict in github.ts, github.test.ts, demo.ts, demo.test.ts, swarm.ts and manualMerge.test.ts. Hand-adapt before shipping: (a) in advanceMerge, re-queue QA only on head-moved/no-passed-sha/not-passed; on checks-not-passing, merge-state, changes-requested, draft or not-open, set a mergeNote plus mergeRetryAt (or needs-human), never a requeue; (b) decide the policy for checks 'none' (allow per floor, or when the repo has no required checks), and accept HAS_HOOKS beside CLEAN; (c) keep a human override, for example a force flag sent by the 'Merge anyway' confirm that still pins --match-head-commit to the fresh head, and align KanbanView/PocketApprovals; (d) add tests for (a) to (c). Take it before branch-update-requeues-qa.",
+     "notes": "key_commits mix two divergent implementations. 78c7c3f, 5866cc3, a23f894 and 6b40b90 (on codex/integrate-safety-upstream, merged with 157efde) are the mergeGate()/gatedMerge() design the description names. 8f4ba53, 60b526c and 1bd2c4e (fork main, based on 31e7ce0) are freshMergeStep()/manualMerge(), and the 'S2.5 adversarial matrix' tests that design, not gatedMerge. Design A brings its own zero-merge refusal matrix in manualMerge.test.ts. The upstream gaps are verified: mergeGate.ts:47 synthesises passedSha, mergeStep ignores reviewDecision, and Swarm.mergePull (swarm.ts:1921-1924) merges with no gate and no SHA pin. Upstream already waits on drafts and merges with --match-head-commit at passedSha in the auto path. Design A alone does not stop merging an untested SHA after update-branch, because upstream sets passedSha to the new head there; branch-update-requeues-qa is needed for that. Tests were not run (fork code)."
+    },
+    {
+     "id": "branch-update-requeues-qa",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "conflicts",
+     "conflict_files": [
+      "server/swarm.ts",
+      "server/manualMerge.test.ts"
+     ],
+     "tests_included": true,
+     "hidden_risks": "Repos with 'require branches up to date' see an extra full QA agent session every time the base moves after a pass. Retests do not count against MAX_QA_ROUNDS, so busy floors can spend many sessions; the cost is bounded only by how often the base moves. retestPatch also nulls passedSha on the 'commits arrived' requeue path, not only after update-branch. In swarm.ts, failedConflict (line ~3341) and mergeFix (line ~3549) read passedSha, so a conflict found on the retest is worded as a QA fix rather than 'QA passed it, now it conflicts'. No external calls, secrets or permission changes.",
+     "verdict": "confirmed",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "Do not cherry-pick d113a9b. It conflicts in server/swarm.ts, and its test imports design B's freshMergeStep/manualMerge from manualMerge.test.ts. Hand-port about 6 lines instead. Add a pure retestPatch(rec) returning { status: 'queued', round: rec.round + 1, retests: rec.retests + 1, passedSha: null, mergeNote: null, pendingSince: null }, preferably in server/mergeGate.ts or qaOutcome.ts per the repo's pure-helper convention. In advanceMerge's update-branch block (swarm.ts:1620-1626), replace the prDetails + setQa({ passedSha: details.headSha }) with setQa(rec, retestPatch(rec)); setTimeout(() => this.schedule(), 200). Optionally use retestPatch on the requeue path, after weighing the passedSha wording effect. Port only the retestPatch and requeue assertions of d113a9b's test, into mergeGate.test.ts. Consider a per-floor setting to trust CI for base-only updates. Apply after fail-closed-merge-gate, and use the same helper in design A's refusal requeue.",
+     "notes": "Verified that upstream swarm.ts:1620-1626 runs updateBranch, then prDetails, then setQa({ passedSha: details.headSha }), so the merge commit QA never tested is merged at a SHA treated as QA-passed. Upstream's comment calls this deliberate ('CI checks the result'), so it is a policy hole, not a crash bug. d113a9b is on the fork's old-base main, not on the 157efde-based integrate branch."
+    },
+    {
+     "id": "paul-merge-gate-findings",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": false,
+     "hidden_risks": "Docs only, but written for upstream 0.3.2 (11237cf) and Paul-Osborn's own clone URL and experiment layout. Importing it would put stale, fork-specific instructions into the user's repo. No code.",
+     "verdict": "confirmed",
+     "corrected_recommendation": "idea-only",
+     "import_recipe": "Do not import docs/windows-experiment.md (commits 9ceb7cd and 33ebb39 on experiment/windows-first). Turn the findings into issues instead. Finding 1 is the same as branch-update-requeues-qa. Finding 2: onQaFinished (swarm.ts:3400) computes pass = report.verdict === 'pass' and ignores report.checks; make a 'pass' that lists a check with result 'fail' count as fail or needs-human. Put that in a pure helper next to parseReport (swarm.ts:446-471) and test it. Finding 3: the QA evidence and comment posting (swarm.ts:3405-3427) only logs failures (saveQaShots returns [], commentPull errors go to the terminal) and still sets status 'passed'; decide whether a missing PR report should hold auto-merge with a mergeNote.",
+     "notes": "All three findings verified against 157efde. The doc says nothing more than this."
+    },
+    {
+     "id": "ws-origin-check",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "conflicts",
+     "conflict_files": [
+      "CLAUDE.md",
+      "CONTRIBUTING.md",
+      "README.md"
+     ],
+     "tests_included": true,
+     "hidden_risks": "A breaking change the claim missed. On the default loopback bind, officeHostnames() returns an empty set, so only loopback Origins pass. Upstream's recommended phone access is Tailscale Serve on loopback (docs/pocket.md:94-104: tailscale serve --bg 4317, opened as https://office-pc.<tailnet>.ts.net), and Cloudflare Tunnel with Access works the same way. In both, the Origin hostname is the tunnel name, so /ws and /ws/term get a 403. Every client mode connects /ws at startup (client/src/main.tsx:9, net.ts:75), so pocket mode, the PWA and terminals stop updating behind those proxies. Also, preview apps served through the gateway (/preview/<port>/, 8ebd6c3) are same-origin and still pass, which matches the claim. It accepts a missing Origin by design. It logs refused origins to the console, capped at 100. No secrets, telemetry or permission changes.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "From the mgscox clone (or format-patch): git cherry-pick -n 7efb8b3, then git checkout HEAD -- CLAUDE.md CONTRIBUTING.md README.md. Those doc hunks describe mgscox's own SWARM_HOST docs and conflict. Keep server/wsOrigin.ts, server/wsOrigin.test.ts, e2e/wsOrigin.spec.ts and the server/index.ts hunk; it auto-merged cleanly and sits right after the upgradeGateway line. Hand-add one CLAUDE.md code-map line. Adapt before shipping: also allow the host of the manager's 'Office address for links' (notify officeUrl, shared/notify.ts), and/or an explicit env allowlist, so Tailscale Serve and tunnel users keep working, with a unit test for it. Track the preview-gateway same-origin exposure as a follow-up. If loopback-request-boundary is also taken, take only one of the two upgrade checks, or put both on one shared allowlist.",
+     "notes": "The commit is on mgscox main (base 11237cf, 135 commits behind). Code applies cleanly on 157efde, verified in a separate mgscox worktree because the localloop clone lacked the blobs for a 3-way apply. The Vite dev proxy for /ws has no changeOrigin (vite.config.ts:16), so dev with Host and Origin both localhost:5317 still passes. Tests were not run."
+    },
+    {
+     "id": "loopback-request-boundary",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "conflicts",
+     "conflict_files": [
+      "server/index.ts"
+     ],
+     "tests_included": true,
+     "hidden_risks": "Imported as is, it breaks every non-loopback way of reaching the office that upstream documents. authority() accepts only localhost/127.0.0.1/[::1] with the bound port, and Origin must start with http://. That gives a 403 for: --host/SWARM_HOST LAN access (f32ce7d); Tailscale Serve and Cloudflare Tunnel (https origins and tunnel Host names; upstream's recommended pocket/phone setup); the preview gateway for other devices (8ebd6c3), since the boundary runs before handleGateway; and Vite dev reached over the LAN. With a single-address SWARM_HOST, agent hook callbacks go to http://<LAN-IP>:port (localAddress), so Host fails and every hook, status line and notify gets a 403 (agents break). Unknown or stale callback tokens now get a 403 instead of upstream's empty {} answer. Websocket upgrades without Origin are refused. It exports `server` from index.ts only for the integration test, which imports the real index.ts with a stubbed Swarm; whether that test boots against upstream's index.ts was not run here. docs/local-safety.md tells users never to use tunnels, reverse proxies or 0.0.0.0, which contradicts upstream's docs. No secrets, telemetry or permission flags.",
+     "verdict": "confirmed",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "Preferred route: the 157efde-based net diff of the integrate branch, which applies cleanly: git -C <localloop clone> diff 157efde origin/codex/integrate-safety-upstream -- server/requestBoundary.ts server/requestBoundary.test.ts server/requestBoundary.integration.test.ts server/cliRunner.ts server/cliRunner.test.ts server/index.ts e2e/securityBoundary.spec.ts playwright.config.ts | git apply. Equivalent by commits: 9b14196 (clean), then e8a0107 (one trivial server/index.ts conflict: keep the boundary middleware first, then the preview-gateway middleware), then 12b43f2. Skip 2e3bf19 (a superseded alternative of the same step) and the merge 8430516. Skip docs/local-safety.md and the other doc commits. Do not mix in the fork main's different session-token boundary (44ac92f, 69d1954, 859b859). Adapt before enabling: derive the allowed Host/Origin names from HOST (bound address, interface addresses and hostname when not loopback, like mgscox's officeHostnames) plus the officeUrl host (https allowed). Alternatively, enforce the strict loopback policy only when HOST is loopback and require a token or pairing otherwise. Make sure hook URLs stay valid for single-address binds, and add tests for those modes.",
+     "notes": "Verified: upstream index.ts has no Host/Origin/Sec-Fetch checks apart from previewGateway's own sec-fetch use, and docs/pocket.md says there is no sign-in, so the CSRF/DNS-rebinding hole is real. The policy is pure and well tested (unit, integration and e2e), and the Playwright config adds an Origin header. The claimed commit list includes a superseded commit and a merge. The fork's main branch has a third, incompatible implementation."
+    }
+   ],
+   "cross_feature_conflicts": "fail-closed-merge-gate and branch-update-requeues-qa both edit Swarm.advanceMerge in server/swarm.ts. Take the merge gate first (cherry-pick 78c7c3f 5866cc3 a23f894 6b40b90, clean), then hand-port retestPatch into the update-branch block and use it for the gate's refusal requeue too. d113a9b cannot be cherry-picked on top: its test imports the fork main's freshMergeStep/manualMerge. Without the branch-update change the gate still merges an untested SHA after update-branch, because upstream sets passedSha to the new head. The fork's main-branch merge-gate commits (8f4ba53, 60b526c, 1bd2c4e) are a second design that overlaps mergeStep, prDetails and mergePull; never mix them with the integrate-branch design. paul-merge-gate-findings finding 1 is the same as branch-update-requeues-qa; findings 2 and 3 (verdict vs checks, unpublished evidence) are covered by no candidate. ws-origin-check and loopback-request-boundary both add checks to server.on('upgrade') in server/index.ts. They are textually compatible: the boundary's index.ts diff applied cleanly by 3-way merge on top of 7efb8b3. But the boundary is stricter on upgrades (Origin required, loopback Host), so taking both is redundant. Pick one, or put both on one shared allowlist built from HOST, interface names and the officeUrl host. Both break Tailscale Serve, --host and preview-gateway access until adapted. If both are taken, the boundary middleware goes before handleGateway and the ws-origin check after routing. Worktrees used (left reset and clean): C:/Users/peti/AppData/Local/Temp/claude/c968d675ef2f985c/23326b94-69a1-40d9-887d-ac86b5b528d8/scratchpad/verify-wt/merge-gate-security (localloop-pro clone) and C:/Users/peti/AppData/Local/Temp/claude/c968d675ef2f985c/23326b94-69a1-40d9-887d-ac86b5b528d8/scratchpad/verify-wt/merge-gate-security-mgscox (mgscox clone, needed for the 3-way pick)."
+  },
+  {
+   "group": "ceo-and-clis",
+   "verdicts": [
+    {
+     "id": "ceo-any-cli",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "1) Regression in shared/models.ts effectiveModel: for cli==='codex' any model containing '/' is now rejected (`return cli === 'opencode' || !model.includes('/')`). That silently breaks upstream #311 (5bd09db) local models for Codex: 'ollama/gpt-oss:20b' and 'lmstudio/openai/gpt-oss-20b' (still offered by modelSuggestions('codex')) resolve to '' and Codex runs its default cloud model. No upstream test covers effectiveModel with a local Codex model, so npm test will not catch it. Still present on francovp main and on feature/ceo-cli-setting. 2) Changes for every agent, not just the CEO: nextSession() makes a worker whose CLI was changed start fresh on the new CLI instead of resuming in the old one. All OpenCode sessions now get a bare model rewritten to 'opencode/<id>' (OpenCode's own hosted provider, so traffic and billing change). Resumed OpenCode sessions no longer pass --prompt: the prompt is typed after the screen shows /ctrl\\+p\\s+commands/, and the session fails after BOOT_MS if that text never appears. XDG_STATE_HOME is redirected per session. A new plugin 'chat.message' hook forces model.variant = effort on every OpenCode message, so the workers' default effort now becomes a variant. Whether a model without that variant accepts it was not verified. 3) Codex CEO safety relies on Codex flags I could not check: --sandbox read-only, --ask-for-approval never, -c features.shell_tool=false, -c features.multi_agent=false, and the office MCP default_tools_approval_mode=\"approve\". If Codex rejects an unknown key, the CEO cannot start. Codex's sandbox on Windows is also less mature. 4) An OpenCode CEO denies edit/bash/task but allows webfetch and OpenCode's read/glob/grep anywhere on disk, the same reach the Claude CEO's Read has today. 5) The new office tools list_directory, read_file (64 KiB, realpath-contained) and save_notes (wx temp + rename, no EBUSY retry) are exposed to every CEO, Claude included. Relative paths resolve against the server cwd and get refused. 6) No new HTTP route: /api/mcp/:token already exists upstream (server/index.ts:39). The CEO default stays Claude, and the SDK runtime always runs Claude. No i18n, telemetry or fork-only dependencies.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "Take francovp: git fetch https://github.com/francovp/cubefarm main feature/ceo-cli-setting. Either git cherry-pick 625e1df 7685466 (both apply cleanly on 157efde; verified, 22 files, no conflicts; 7685466 does not need the unrelated dda4f19 between them), or the equivalent fast-forward of feature/ceo-cli-setting (f9e7845, 2e3e924, 154619c, parent 157efde; the tree matches 625e1df+7685466 apart from dda4f19's demo.ts lines). Do not take pr-298-evidence (screenshots only), dda4f19 (QA Send resume, a different feature), Calel33 e2e7782/4f6da11/c838544 (older duplicate) or Saredigital 5578df1 (Claude/Codex only, Spanish, mixed with deps/QA prompt changes). Required follow-up commit: in shared/models.ts effectiveModel, make the Codex branch accept local models: `return cli === 'opencode' || !model.includes('/') || localModel(model) !== null;`. Add expects in shared/models.test.ts that effectiveModel('ollama/gpt-oss:20b','codex',...) and 'lmstudio/openai/gpt-oss-20b' pass through. Then decide whether the OpenCode worker changes (opencode/ prefix, variant hook, XDG_STATE_HOME, typed resume prompt) should stay global or be limited to role 'ceo'. Run typecheck, test and build, then check a Codex CEO and an OpenCode CEO by hand on a demo-free throwaway office, since the CLI flags cannot be unit-tested. Import this first: copilot-cli-agent stacks on it, and opencode2-compat must be ported after it.",
+     "notes": "Commits verified: 625e1df is the squash of f9e7845+2e3e924 (PR #3 in the fork). 7685466 equals 154619c, the Codex approval-mode fix. Every described behavior is in the diff: officeToolPrefix, readViaOffice/saveNotesViaOffice, the CEO CLI picker in AgentSettings and ManagerConsole, nextSession with live follow, sessionEffort reset, and requeueing a chat after an OpenCode resume failure. Upstream main still pins the CEO (swarm.ts:2682 `a.role === 'ceo' ? 'claude'`). Tests check behavior: ceoRuntime.test.ts drives a demo-backend Swarm, and clis.test.ts covers nextSession, the CEO launch flags and the plugin variant hook. 'Three forks built the same thing' is overstated: Saredigital's 5578df1 is Claude/Codex only and does not restrict the Codex CEO. Downgraded from a plain cherry-pick because of the silent regression in Codex local models and the changes to OpenCode workers."
+    },
+    {
+     "id": "copilot-cli-agent",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "needs-other-feature-first",
+     "conflict_files": [
+      "README.md",
+      "client/src/ui/ManagerConsole.tsx",
+      "docs/how-it-works.md",
+      "server/ceo.test.ts",
+      "server/ceo.ts",
+      "server/cliRunner.ts",
+      "server/clis.test.ts",
+      "server/swarm.ts",
+      "shared/models.test.ts",
+      "shared/models.ts",
+      "shared/types.ts"
+     ],
+     "tests_included": true,
+     "hidden_risks": "1) None of the Copilot CLI flags or hook formats can be checked here: --plugin-dir, --agent, --session-id/--name, --resume, --reasoning-effort, --additional-mcp-config, --disable-builtin-mcps, --available-tools, --allow-tool, --deny-tool shell,write, --allow-all, --no-ask-user, --interactive, plus the hooks.json schema and transcript event types. If any is wrong, Copilot agents fail at launch or never report turn ends. 2) Workers run with --allow-all (consistent with upstream's unsandboxed agents). The Copilot CEO's no-shell guarantee depends entirely on --available-tools/--deny-tool. COPILOT_OFFICE_TOOLS hard-codes the 16 office tool names, so a future office tool would silently be missing for a Copilot CEO. 3) Changes for existing users: updateAgent now clears the model whenever any agent's CLI changes. TRUST_PROMPT is widened for all CLIs, so more folder-trust questions get auto-answered. updateSettings now refuses defaultCli=opencode/copilot while cloud agents without their own CLI exist. bin/cubefarm.js spawns `copilot --version` on every non-demo start (30 s timeout). It uses spawnSync without a shell, so on Windows an npm-installed copilot.cmd is reported as not installed in doctor; the server's own detection uses the proper shim lookup. Optional checks no longer fail `doctor`. 4) The model suggestions (gpt-6.1-sol, gpt-6-astra, gpt-6-luna, claude-sonnet-5.5, claude-opus-5.5) cannot be verified. The Copilot effectiveModel regex silently drops other ids (e.g. o-series, grok). 5) Needs a Copilot subscription. Refused for Box agents (boxTarget throws, updateAgent returns 400).",
+     "verdict": "downgrade",
+     "corrected_recommendation": "cherry-pick",
+     "import_recipe": "Only after ceo-any-cli (625e1df + 7685466) is in: git cherry-pick ed286d1. Verified clean on top of those two without dda4f19 (18 files). On bare 157efde it conflicts in 11 files, so it is not 'low conflict risk' on its own. The squash message repeats the CEO feature text, but the diff is only the Copilot delta. Optional hand fixes after picking: drop or trim the speculative copilot entries in modelSuggestions, and make the doctor check resolve copilot.cmd on Windows (or leave it as optional noise). Skip entirely if the user has no Copilot subscription. It adds a fourth CLI, more flags to maintain and risks that cannot be checked here.",
+     "notes": "Commit ed286d1 (parent 7685466) adds server/copilot.ts (session-scoped plugin: agent file plus hooks.json; a hook script that POSTs SessionStart/UserPromptSubmit/Stop->TurnComplete/ErrorOccurred->TurnError/Notification to /api/hooks/:token), a 'copilot' entry in CLIS and AgentCli, launch args, a SessionStart case in cliRunner (upstream has none, so no duplicate case label), sign-in detection, and the Box refusal. Tests: copilot.test.ts runs the hook script against a local HTTP server with a fake transcript, plus additions to clis.test.ts, models.test.ts and ceo.test.ts. Value is moderate and depends on the user owning Copilot."
+    },
+    {
+     "id": "telemove-ceo-on-opencode",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "1) Confirmed governance gap: an OpenCode CEO keeps permission {edit:'allow', bash:'allow'}, so it has a shell and can write files, while its system prompt says 'You cannot run shell commands'. 2) Bug in the SDK runtime: runCeoJob uses ceoCli = how.cli ?? (a.cli || 'claude'). If the manager picked OpenCode and then the runtime is (or becomes) sdk, the Claude Agent SDK CEO is told to call office_* tools (the real names are mcp__office__*), and ceoModel(a,'opencode') returns '' so the SDK gets no model. agentPrompt/ceoPromptInput also use a.cli whatever the runtime. 3) sessionRuntime still follows the old sessionCli for chats, so after switching Claude to OpenCode a chat keeps resuming the Claude session. 4) Codex is rejected with a 400 only when patch.cli === 'codex'. 5) It conflicts with ceo-any-cli in 11 files and is a strict subset of it.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "skip",
+     "import_recipe": "Do not import. ceo-any-cli (francovp 625e1df + 7685466) covers the same thing plus Codex, denies bash/edit/task for an OpenCode CEO, and handles the SDK runtime correctly. If francovp were ever rejected, the only part worth reusing from telemove 5312201 is the small OpenCode mcp.office remote entry in launchArgs, which francovp already has in the same shape. Applying both would conflict (README.md, AgentSettings.tsx, ManagerConsole.tsx, floorRows.ts, how-it-works.md, ceo.ts, cliRunner.ts, clis.test.ts, clis.ts, swarm.ts, types.ts).",
+     "notes": "The fork is main = ae4bc82, a merge of 5312201 onto 157efde. 5312201 applies cleanly to 157efde (git apply --3way --check). Tests are small: a CEO prompt prefix test in ceo.test.ts and an OpenCode office MCP config test in clis.test.ts. The original reviewer was right about the bash gap, but recommending a port-adapt makes no sense once a cleaner superset applies cleanly."
+    },
+    {
+     "id": "kk-ceo-codex-opencode",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "conflicts",
+     "conflict_files": [
+      "client/src/ui/AgentSettings.tsx",
+      "client/src/ui/ModelPicker.tsx",
+      "server/modelChoice.test.ts",
+      "server/swarm.ts",
+      "shared/models.ts",
+      "shared/models.test.ts",
+      "server/clis.ts",
+      "server/cliRunner.ts"
+     ],
+     "tests_included": true,
+     "hidden_risks": "1) A Codex CEO still runs with --dangerously-bypass-approvals-and-sandbox, and an OpenCode CEO with bash:'allow' and edit:'allow' (checked on origin/codex/ceo-office-mcp), so a non-Claude CEO gets a full shell. 2) The CEO system prompt still says mcp__office__company_status and 'the mcp__office__ tools', which is wrong for OpenCode, where the tools are office_*. 3) It depends on fork-only infrastructure: the ModelPicker and model catalog (36a64a7, server/modelChoice.test.ts, client/src/ui/ModelPicker.tsx, missing upstream) and the German i18n layer (useT, t('uiExtra.codingAgent') from bdf2692 and later). The base is d3b47c6, 8 commits behind upstream main. 4) Behavior changes: startup moves detectClis into refreshModels; any CLI change resets model and effort for all agents; the CEO's effort falls back to the office defaultEffort on Codex/OpenCode. 5) The commits are scattered: 73bdb63, 54b9e0c and 8e1b599 are the same change on different parents; de32e0a sits on fix/ceo-model-default-for-codex (on 73bdb63) while 20fbed3 and 074a8e7 sit on codex/ceo-office-mcp (on 8e1b599), so there is no single branch to pick.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "skip",
+     "import_recipe": "Do not import. Superseded by ceo-any-cli. Cherry-picking 8e1b599 or 73bdb63 onto 157efde conflicts in AgentSettings.tsx, swarm.ts, shared/models.ts and models.test.ts, with modify/delete on ModelPicker.tsx and modelChoice.test.ts. 20fbed3 alone conflicts in clis.ts and cliRunner.ts. The ~120-line size only holds because it builds on several hundred lines of fork-only model-catalog and i18n code. Nothing unique worth keeping beyond the same -c mcp_servers.office={url=...} idea that francovp already implements, with the shell locked down.",
+     "notes": "The 'about 120 lines' and 'follows upstream convention' claims are true for the diff itself, but it is not portable without the fork's model picker and i18n. The original agent's risk note (CEO loses the no-shell guarantee) is confirmed and is a reason to skip, not to port."
+    },
+    {
+     "id": "opencode2-compat",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "conflicts",
+     "conflict_files": [
+      "server/clis.ts",
+      "server/clis.test.ts",
+      "server/cliRunner.ts"
+     ],
+     "tests_included": true,
+     "hidden_risks": "1) Adopting it unconditionally breaks OpenCode 1.x. The plugin changes from a bare .mjs default function to a folder exporting {id, setup}, the --standalone flag is added, --model is removed, and the variant/chat.message hook that ceo-any-cli adds to OPENCODE_PLUGIN_SOURCE disappears. Upstream's local-model path (`--model ${provider}/${model}` plus opencodeLocal) also has to move into config.model. 2) Fork-only dependencies: the CliId type, ctx.provider and customProviderOpencodeConfig (the fork's custom providers, which put an apiKey into OPENCODE_CONFIG_CONTENT; do not port that part). The 778ed82/625cee7/7d1a0ce base is d3b47c6. 3) None of the OpenCode 2 claims can be checked here: no --model flag in 2.1.3, the plugin folder format, ctx.event.subscribe, ctx.session.context, session.execution.succeeded. 4) 625cee7 added console.error dumps of the first event and session context. 7d1a0ce removes them, so never take 625cee7 without 7d1a0ce. 5) 8dc1d0c lives only on main. Its cliErrorDetail (the last 4 screen lines appended to 'exited before finishing') is independent and safe for all CLIs.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "No commit applies on 157efde: 778ed82, 625cee7, 7d1a0ce and 8dc1d0c each conflict on their own, in clis.ts/clis.test.ts and in cliRunner.ts for 625cee7. Hand-port only if the user actually runs OpenCode 2, and only after ceo-any-cli, because both rewrite the OpenCode plugin and the --model/--prompt handling. Steps: (a) copy OPENCODE_PLUGIN_FILES (package.json + index.js) as of 7d1a0ce, and keep the existing OPENCODE_PLUGIN_SOURCE for 1.x. (b) Pick the plugin format, --standalone, and model-in-config versus --model from the detected OpenCode version (upstream detectClis already records CliView.version; pass it into LaunchContext). Keep the 1.x path byte-identical. (c) Carry francovp's variant/PromptAccepted hook into the v2 plugin, or document that it is 1.x only. (d) Separately, take cliErrorDetail from 8dc1d0c (server/cliRunner.ts) as a small generic improvement. (e) Port the clis.test.ts cases from 625cee7/7d1a0ce/8dc1d0c, minus the custom-provider ones. Drop ctx.provider and customProviderOpencodeConfig.",
+     "notes": "The commits do what is described: 778ed82 adds --standalone. 625cee7 and 7d1a0ce rewrite the plugin as a folder with a background event loop, TurnComplete on session.idle or session.execution.succeeded deduped within 1 s, session.error mapped to TurnError, an abort teardown and root detection from the first session seen. 8dc1d0c moves the model to OPENCODE_CONFIG_CONTENT.model and surfaces the CLI's error text on screen. Upstream still writes opencode-plugin.mjs and passes --model (clis.ts:302). The conflict risk is high, not medium, and the effort is M, not S. It is only valuable if OpenCode 2 is in use, which cannot be checked here."
+    }
+   ],
+   "cross_feature_conflicts": "ceo-any-cli (francovp 625e1df+7685466) is the base. Import it first: it applies cleanly on 157efde (verified in the scratch worktree). copilot-cli-agent (ed286d1) must come right after it. It applies cleanly on top of the two commits, without the unrelated dda4f19, but conflicts in 11 files on bare 157efde. telemove 5312201 and kk (8e1b599/73bdb63 + 20fbed3 + 074a8e7 + de32e0a) are alternative implementations of the same CEO CLI pin removal. They conflict with ceo-any-cli in swarm.ts, clis.ts, cliRunner.ts, ceo.ts, AgentSettings.tsx, ManagerConsole.tsx, floorRows.ts and shared/types.ts, and both leave a non-Claude CEO with a shell, so skip them. opencode2-compat (mysteryreloaded) touches the same code as ceo-any-cli: launchArgs 'opencode' (the --model/--prompt/resume handling, plus the opencode/ prefix ceo-any-cli adds) and OPENCODE_PLUGIN_SOURCE (ceo-any-cli adds a chat.message variant/PromptAccepted hook that the v2 plugin rewrite drops). Hand-port it last, gated on the detected OpenCode version, and carry the variant hook into the v2 plugin. ceo-any-cli also changes shared/models.ts effectiveModel in a way that breaks upstream #311 Codex local models ('ollama/...', 'lmstudio/...'). Fix that in a follow-up commit right after picking it, before copilot-cli-agent, which edits the same function."
+  },
+  {
+   "group": "reliability",
+   "verdicts": [
+    {
+     "id": "save-desk-work-before-reuse",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "Reverses a deliberate upstream choice. Upstream's reuseDesk comment says untracked leftovers from the last task are dropped; the fork saves them to <SWARM_HOME>/leftovers on every desk reuse. Leftovers are never pruned and have no size cap, and git diff --binary copies large non-ignored binaries (screenshots, sqlite files, a non-gitignored .env) into those patches. saveBeforeReuse sits in setUpWorktree, so it also runs for preview desks (swarm-preview, swarm-preview-pr-N), not only agents' machines. Only qa/pr-* is skipped, so a preview app that writes non-ignored files leaves a patch on every preview restart. .playwright-mcp/ and .preview-tmp/ are safe because they are in info/exclude. Each task start pays a few more git calls (ls-files, rev-list, merge-tree). There are no external calls, secrets handling, permission changes or new dependencies. Box machines are not covered.",
+     "verdict": "confirmed",
+     "corrected_recommendation": "cherry-pick",
+     "import_recipe": "git cherry-pick -x 4d56b71 from mysteryreloaded/software-development-factory main. It is a single squash commit touching server/workspace.ts and server/workspace.test.ts, and it applied with no conflicts on 157efde. It reuses upstream's existing staleIndexLock and the test helpers (makeRepos, commitFile, branchOf), and no later fork commit touches workspace.ts. Optional hand-adapt: also skip desks whose branch starts with swarm-preview in saveBeforeReuse, so preview restarts write no patches, and consider a leftovers prune. Run typecheck and the workspace tests on Windows: the existing stale-lock test expects exactly one note, and the lock is now cleared earlier, in saveBeforeReuse. Independent of the other candidates.",
+     "notes": "Verified the diff: ls-files --others --exclude-standard, add -N in chunks of 100, diff HEAD --binary, and a merge-tree --write-tree squash check with catch fallback. saveBeforeReuse is called before reuseDesk, skips qa/pr-*, clears the stale index.lock first, and failures only call note(). The fork's merge-base is d3b47c6, but the 3-way cherry-pick onto 157efde was clean."
+    },
+    {
+     "id": "kk-trust-prompt-fixes",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "None found. It is pure string logic in clis.ts trustKey, and its callers are still bounded by trustKeys < 12 and the trustedAt debounce in cliRunner watchBoot. The last-marker rule can also return null where the old first-marker rule returned a key, for example when a CLI's own prompt line sits below a stale question, which is the safer direction.",
+     "verdict": "confirmed",
+     "corrected_recommendation": "cherry-pick",
+     "import_recipe": "git cherry-pick -x 79caf97 68a8ac6, in that order, from konstantinknappe-hash/cubefarm (branch fix/trust-prompt-last-question holds both). Both applied with no conflicts on 157efde, one after the other, and touch only server/clis.ts trustKey and server/clis.test.ts (2 new cases). Uses matchAll and Array.at, both fine for the ES2022/ES2023 target. Independent of the others. If tubadog-project-mcp-dialog-guard is ported into clis.ts or watchBoot, take this first.",
+     "notes": "The upstream body matched the fork's pre-image exactly (upstream line 352). These are tiny, real edge cases, because AgentTerminal persists the screen across sessions, CLI switches and office restarts."
+    },
+    {
+     "id": "kk-draft-pr-ready",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "This flips a safety default and contradicts upstream's own agent contract. Upstream prompts.ts:92 tells agents 'If you cannot finish, open a draft PR (gh pr create --draft) explaining what is left and why', and swarm.ts:3156 does the same in the no-PR follow-up. After a build, swarm.ts:3137 queues QA for the agent's PR whether or not it is a draft. With this commit, a draft the agent itself declared unfinished that QA passes (QA tests what is there) and that has green checks is undrafted with gh pr ready and then auto-merged on the next sync. Agents are never told to put WIP in the title, so the draftHeld regex (wip, do not merge, unfinished, blocked) does not catch them. It also overrides a human who converts a QA-passed PR back to draft as a hold signal. It is a new GitHub write (gh pr ready), and there is no opt-in setting.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "skip",
+     "import_recipe": "Do not cherry-pick fc42a6a. It applies cleanly (7 files, including mergeGate.ts, swarm.ts advanceMerge, backend.ts, github.ts, demo.ts and tests), but it would auto-merge PRs that upstream treats as unfinished by contract. If the user wants it later, re-implement it as a per-floor opt-in that is off by default. That would mean changing prompts.ts so 'cannot finish' drafts carry an explicit marker (a label rather than a title keyword), excluding drafts a human created or converted, and only then adding Backend.markReady with its demo fake.",
+     "notes": "The commit is real and does what the description says. Its value is specific to that fork's workflow, where agents open drafts as a matter of course. Under upstream's contract it is a regression, not a fix."
+    },
+    {
+     "id": "mcp-input-bounds",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "The value is overstated. The 10k-element and depth-64 walk runs after the token lookup (an unknown token still gets 404 first), so only the CEO's own local CLI, which holds the session token, can reach it. It adds no protection for LAN exposure under --host. The only pre-auth change is the MCP body limit, cut from 4mb to 1mb. The real pre-auth item is the body-parser/qs bump, which covers every route, and that is a lockfile-only change. The fork cites advisories (GHSA-46jr-4wx8-v453, GHSA-mrhx-c7xc-m3w5, GHSA-27r3-jxmh-p828) that I could not verify offline, so check them before relying on them. mcpInput.ts uses a non-null assertion (pending.pop()!), which the user's rules forbid. The new tests start Express on 127.0.0.1:0 and fetch it (loopback only, no external calls). The httpParser test exercises Express internals. The docs are fork process logs, partly in Italian. Dependency compatibility checks out: claude-agent-sdk 0.3.283 has peer @modelcontextprotocol/sdk ^1.29.0, so 1.32.2 satisfies it. The locked content-type 2.1.0 and iconv-lite 0.7.3 already satisfy body-parser 2.4.0.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "1) Regenerate the dependency bumps locally instead of taking the fork's lockfile: npm install @modelcontextprotocol/sdk@^1.32.2 zod@^4.6.7, then npm update body-parser qs, after confirming the cited advisories. 2) Optionally take only server/mcpInput.ts and server/mcpHttp.ts from 0e74f06, plus the cliRunner.ts handleMcp delegation, the index.ts MCP_BODY_LIMIT, and the tests server/mcpInput.test.ts and server/mcpHttp.test.ts. Rewrite the pop()! loop without the non-null assertion. Drop docs/MCP_INPUT_VALIDATION.md, docs/HTTP_PARSER_VALIDATION.md, server/httpParser.test.ts and server/mcpInput.http.test.ts. Both 0e74f06 and 2384472 cherry-pick cleanly on 157efde if taken whole. The base is exactly 157efde.",
+     "notes": "Confirmed both commits: 0e74f06 touches 10 files and 2384472 touches 3. 2384472 changes only package-lock.json (body-parser 2.3.0 to 2.4.0, qs 6.16.0 to 6.17.1) plus a test and a doc."
+    },
+    {
+     "id": "persistence-shutdown-hardening",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "needs-other-feature-first",
+     "conflict_files": [
+      "server/swarm.ts",
+      "server/terminalSaveBatch.test.ts"
+     ],
+     "tests_included": true,
+     "hidden_risks": "Idempotent shutdown only matters in tests: upstream index.ts already guards shutdown with `closing`, and Swarm.shutdown has a single caller. The runtime fixes that hold up are four. AgentTerminal.save is serialized: the setInterval saveTerminals and the shutdown saveTerminals(true) can overlap on the same .tmp file and fail with EPERM on Windows, losing only a warning and the terminal replay. A final writeState now runs in finally, so state changes made during releaseClis or previews.stopAll are no longer lost to a 1500 ms timer that never fires before process.exit. Terminal saves run 8 in parallel. Journal gains a stopped flag. Two parts are test plumbing only: c1ee377 (notify returns a promise; callers ignore it) and the previews.sweepPrs promise (its setInterval caller ignores it). 5cbfcca also restructures vitest.config.ts into two projects (functional, then serial timing-sensitive), which changes how npm test runs for everyone, and lists server/httpParser.test.ts from the mcp-input-bounds feature. 5e15a87 adds a Windows Node 22 CI job, rewrites the scale.test.ts teardown (private access through `as unknown as`), and ships long fork validation docs. There are no external calls or secrets. Retest a demo office restart.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "Trial results: 5e15a87, then 5cbfcca, then c1ee377 apply on 157efde with no conflicts (23 files, +1193/-48). 5cbfcca alone conflicts in server/swarm.ts and server/terminalSaveBatch.test.ts (modify/delete), so it needs 5e15a87 first. c1ee377 alone is clean. Recommended port: run git cherry-pick -n 5e15a87 5cbfcca, then keep only the source and focused tests. Keep server/terminal.ts and server/swarm.ts (shutdownTask/stopping, finishShutdown with writeState in finally, saveTerminals/writeTerminals with the bound of 8 and no overlap) and server/journal.ts. Keep the tests server/terminalPersistence.test.ts, server/terminalSaveBatch.test.ts, server/stateShutdown.test.ts and the server/journal.test.ts additions. Revert (git checkout HEAD --) .github/workflows/ci.yml, docs/*_VALIDATION.md, scripts/officeFixture*.ts, scripts/testScheduling*.ts, vitest.config.ts and server/scale.test.ts. The previews.ts and previews.test.ts changes are optional. Skip c1ee377 unless its notifier tests are wanted.",
+     "notes": "Claims verified: the serialized save, the stopping guard on save(), the bounded batch of 8, the journal stopped flag, the preview and notifier promise returns, and the Node 22 Windows CI job. The real-world gain is modest: terminal replay files and final state writes at shutdown."
+    },
+    {
+     "id": "tubadog-project-mcp-dialog-guard",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "conflicts",
+     "conflict_files": [
+      "server/cliRunner.ts",
+      "server/swarm.ts",
+      "server/demo.ts"
+     ],
+     "tests_included": true,
+     "hidden_risks": "a32c1d7 is mainly a stuck-screen watchdog: a new setting stuckMinutes (default 15, on), auto-restart of frozen agents, give-up marking and phone messages. That is a separate behavior change for existing users and should not come along by accident. The Esc fallback lives inside that watchdog (screenTick, toolSeen, the new AgentTerminal.press) and keys off screen text tied to Claude Code 2.1.283 wording. Writing disabledMcpjsonServers into the office's --settings overrides a manager who set enableAllProjectMcpServers=true in their own Claude settings, so their repo MCP servers silently stop loading in agent sessions. Without that setting the servers never ran unattended anyway, because the dialog blocked the session. For cloud (Box) agents, opts.cwd is a path inside the Box, so the local readFileSync finds nothing and the guard does nothing for them. Rejecting a repo's .mcp.json is safer for untrusted repos (no arbitrary MCP commands). There are no network calls and no permission flags.",
+     "verdict": "confirmed",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "Do not cherry-pick a32c1d7: it conflicts in cliRunner.ts (2 hunks against upstream's Box settings and import changes), swarm.ts and demo.ts. Hand-port: 1) projectMcpServers() from a32c1d7:server/clis.ts, next to CROSS_TURN_TOOLS, with its describe('projectMcpServers') tests moved from a32c1d7:server/stuckScreen.test.ts into server/clis.test.ts. 2) In cliRunner.ts startCliSession, when !box and cli === 'claude', read <opts.cwd>/.mcp.json and spread disabledMcpjsonServers into upstream's settings object, excluding Object.keys(servers). Build `servers` before `settings` as the fork does, keeping upstream's box branches intact. 3) Optional fallback: add isMcpDialog() to clis.ts and answer it in upstream's existing watchBoot interval with pty.write('\\x1b'), instead of the fork's screenTick, toolSeen and AgentTerminal.press. This also covers Box agents. Drop the stuck watchdog (stuckScreen.ts, settings.stuckMinutes, ManagerConsole/store/types/demo hunks) unless it is wanted as its own feature. Consider a per-floor toggle. Take kk-trust-prompt-fixes first if both touch the watchBoot area.",
+     "notes": "Confirmed that upstream launches Claude with --settings and --mcp-config but no --strict-mcp-config, and never handles disabledMcpjsonServers or .mcp.json, so a repo with .mcp.json really does block at the dialog. The fork's later commit 151038c7 touches the same files but not the MCP logic."
+    }
+   ],
+   "cross_feature_conflicts": "There are no hard conflicts inside this group. Each candidate was trial-applied in its own worktree under C:/Users/peti/AppData/Local/Temp/claude/c968d675ef2f985c/23326b94-69a1-40d9-887d-ac86b5b528d8/scratchpad/verify-wt/reliability/<owner>, all left reset to 157efde. Overlaps to watch:\n1) server/cliRunner.ts: mcp-input-bounds (0e74f06) replaces the StreamableHTTPServerTransport import and the handleMcp body. The tubadog port changes the clis.ts import line and the settings block in startCliSession. The import lines are adjacent, so expect a trivial textual conflict. The tubadog watchBoot fallback sits next to trustKey's caller, so apply kk-trust-prompt-fixes (clis.ts trustKey) before the tubadog port.\n2) server/clis.ts: kk-trust-prompt-fixes (trustKey) and tubadog projectMcpServers/isMcpDialog are in different regions, so no conflict.\n3) server/terminal.ts: persistence-shutdown (save serialization) and tubadog's AgentTerminal.press touch separate methods. The recommended port puts the Esc fallback in watchBoot and does not need press() at all.\n4) server/swarm.ts: persistence-shutdown (shutdown, saveTerminals) and kk-draft-pr-ready (advanceMerge) are in separate regions. Draft-ready is recommended skip anyway.\n5) persistence 5cbfcca's scripts/testScheduling.ts names server/httpParser.test.ts from mcp-input-bounds 2384472, a soft coupling that only matters if the vitest-projects change is taken (recommended: drop it).\n6) save-desk-work-before-reuse touches only server/workspace.ts and its tests, so it is independent.\nSuggested order: kk-trust-prompt-fixes, then save-desk-work-before-reuse, then persistence-shutdown (5e15a87 before 5cbfcca, trimmed), then mcp-input-bounds (deps regenerated locally), then the tubadog MCP guard hand-port. Skip kk-draft-pr-ready."
+  },
+  {
+   "group": "budgets-small-ux",
+   "verdicts": [
+    {
+     "id": "eddie-floor-budgets",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "1) Crash for existing users (the main bug): the replay feeds old journal frames into the store unchanged (client/src/replay.ts frameSnapshot uses `repos: f.repos`, no normalisation). Days recorded before the import (KEEP_DAYS = 7) have RepoViews with no `budget` field. The HUD stays mounted during replay, and its new BudgetHudChip reads `r.budget.level` with no optional chaining. That throws a TypeError, and no error boundary wraps the HUD, so the time-lapse of any pre-upgrade day blanks the app. ManagerConsole's BudgetRow (`repo.budget.budgetUsd`) has the same problem. MissionConsole is safe (`r?.budget ?? null`). compactRepo's `?? default` only applies to newly recorded frames. 2) Spend can be overcounted: in the terminal runtime, costUsd is set from the statusline's cumulative `cost.total_cost_usd`. A CLI kept alive for follow-ups (keepAlive adopt) starts a new closure with costUsd = 0, so each later turn likely reports the process's cumulative total. The floor can then hit 100% early and hold its new issues. Plausible, not verified. The same accounting feeds upstream's ops cost. 3) Spend is never reset (no period). Codex and OpenCode report no cost, so their floors never trigger. signedOutMidTask (cloud agents) records cost without adding it to the budget. 4) The hold gates only auto-assign (startIssueWork). Manual /api/agents/:id/assign and createIssue with assignTo bypass it, and the CEO is not told about it. 5) New notify event 'budget', default on. Existing saved settings merge with DEFAULT_NOTIFY, but it only fires once a cap is set (default 0), so nothing changes for current users. No external calls, secrets or permission changes. The simulate endpoint is demo-only (404 otherwise).",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "Take only 9faf439 (fork main; same patch line for line as a6a9fdc + 5d16b4a on swarm/issue-7-linus, so don't pick those too): `git cherry-pick -n 9faf439` on 157efde. It applies cleanly to all 17 files, and the budget hunk lands in onFinished. Then adapt by hand in the same commit: (a) in client/src/ui/HUD.tsx BudgetHudChip, use `r.budget?.level`; in ManagerConsole BudgetRow, fall back to an EMPTY_BUDGET `{ budgetUsd: 0, spentUsd: null, pct: null, level: 'none', sessions: 0 }`. Better: normalise in client/src/replay.ts (frameSnapshot repos.map and current() for 'repo' events) so old journal days get a default budget. (b) Optional: add the same `if (result.costUsd > 0)` spend block to signedOutMidTask in server/swarm.ts. (c) Decide whether manual assign should also respect budgetBlocks. Run typecheck and test: only 3 RepoView literals exist upstream, and the commit updates all 3. Order: independent of the other candidates. It shares client/src/styles.css and ManagerConsole.tsx with long-messages-60k and eddie-compact-chat-thoughts, but the hunks don't overlap (stacked application verified clean).",
+     "notes": "Commits verified: 9faf439 (#13 on fork main, parent f6abe30), a6a9fdc + 5d16b4a (issue-7 branch). Merge-base with upstream is d3b47c6 (8 upstream commits behind). The upstream checkout has no budget fields, no shared/budget.ts and no 'budget' notify event. The Swarm internals the server test uses (connectRepo, syncRepo, hireAgent, sendToQa, snapshot, init, writeState, startPipelineWork) all still exist upstream. Tests could not be run (fork code must not be executed)."
+    },
+    {
+     "id": "long-messages-60k",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "conflicts",
+     "conflict_files": [
+      "client/src/ui/MessageBox.tsx"
+     ],
+     "tests_included": true,
+     "hidden_risks": "1) The MessageBox conflict is only the import block: the fork's file also imports `useTouch` from '../world/touch' (from fork-only commit c46ec8d4). Keep upstream's imports and add just the MESSAGE_MAX import. The `maxLength={MESSAGE_MAX}` hunk on the textarea applies cleanly. 2) message() now runs messageProblem() for the `typed` path too. That path is AgentTerminal.onIdlePrompt, i.e. a manager typing straight into a CLI waiting at its prompt. A paste over 60k chars there throws an HttpError that `.catch(() => undefined)` swallows, so the office stops tracking that follow-up. Fix: check only for empty text when `typed` is true. 3) Agent messages were previously uncapped, so for agents this adds a cap rather than relaxing one. For the CEO, the cap goes from a silent 4,000-char cut to a 60k hard limit with a 400 error. The CEO is always Claude upstream (swarm.ts:2682), and its messages are pasted into the PTY with bracketed paste, so that path is fine. Long follow-ups to idle Codex or OpenCode agents still go on the command line (clis.ts: `-- ctx.prompt` / `--prompt ctx.prompt`). On Windows anything over about 32k chars will fail to spawn. That problem predates the fork, but the 60k figure the UI now advertises does not hold for those CLIs on Windows. 4) Manager bubbles can now be stored at up to 60k chars in state.json and snapshots, bounded by KEEP_MESSAGES. The journal still clips messages to 600 chars, and manager messages are never spoken (voice.speaks). The 1mb express.json limit covers 60k chars even if multibyte. No external calls or secrets.",
+     "verdict": "confirmed",
+     "corrected_recommendation": "cherry-pick",
+     "import_recipe": "`git cherry-pick -n 4286dec` on 157efde. Resolve client/src/ui/MessageBox.tsx by keeping upstream's import block plus one line, `import { MESSAGE_MAX } from '../../../shared/message';` (drop the fork's `useTouch` import). Keep the textarea's `maxLength={MESSAGE_MAX}`. Recommended tweak in server/swarm.ts message(): when `typed`, check only for empty text, not length. e2e/longMessage.spec.ts is optional (e2e is not in CI; enterOffice(page, { loaded }) exists upstream). Its ManagerConsole.tsx and swarm.ts hunks stack cleanly with eddie-floor-budgets in either order.",
+     "notes": "Upstream swarm.ts:4416 still has `text.trim().slice(0, 4000)` in messageCeo, and postMessage clips everything at 6,000. The original claim (cherry-pick, conflict only in MessageBox.tsx) is accurate. The other 5 files apply cleanly."
+    },
+    {
+     "id": "terminal-touch-scroll",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "1) Commit 37d6148 also adds .swarm-home/demo-state.json, a stray 11,562-line demo state file (removed again in 6c45c20). Never cherry-pick it whole: take only its LiveTerminal.tsx hunk. Upstream .gitignore does not list .swarm-home either, so the fork's 6c45c20 .gitignore line is worth adding too. 2) `touch-action: none` on .live-term-screen applies on every touch device (touchscreen laptops too). It turns off browser pan and pinch-zoom over the terminal. 3) In the alternate buffer, a swipe sends a synthetic WheelEvent to xterm. That is what a desktop mouse wheel already does, so a full-screen TUI without mouse tracking may get arrow-key input from xterm, the same as with a wheel. 4) The claim that xterm 6 has no touch scrolling holds: node_modules/@xterm/xterm 6.0.0 src/browser/Viewport.ts has no touch handling. Pure client code: no server changes, network calls or secrets. Pocket mode does not render LiveTerminal (it's only in TerminalView and ManagerConsole), so the 'phone' benefit is for the 3D UI and panels opened on a phone, not pocket mode.",
+     "verdict": "confirmed",
+     "corrected_recommendation": "cherry-pick",
+     "import_recipe": "On 157efde: `git cherry-pick -n 2d5b0ea` (clean: styles.css, LiveTerminal.tsx, termTouch.ts, termTouch.test.ts, e2e/terminalTouch.spec.ts). Then `git -C <fork> show 37d6148 -- client/src/ui/LiveTerminal.tsx | git apply` (clean; it adds clientX/clientY/deltaMode to the synthetic wheel event). Do NOT pick 37d6148 whole: it adds .swarm-home/demo-state.json. Optionally add `.swarm-home` to .gitignore as 6c45c20 does. e2e/terminalTouch.spec.ts is optional. No ordering constraints. It stacks cleanly with eddie-compact-chat-thoughts, which keeps LiveTerminal behind a Terminal tab.",
+     "notes": "Verified that 2d5b0ea, 37d6148 and 6c45c20 are on mysteryreloaded main. Upstream LiveTerminal.tsx has no touch handling, and termTouch.ts does not exist upstream."
+    },
+    {
+     "id": "kanban-floor-flip",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "1) The arrow keys are hard-coded: a window keydown listener on 'ArrowLeft'/'ArrowRight'. That breaks the repo convention in CLAUDE.md (keymap.ts: 'every shortcut asks it, never a hard-coded key'), and ArrowLeft/ArrowRight are already the player's 'Step left'/'Step right' bindings (keymap.ts:49-50). There is no double action: Player.tsx ignores movement while an overlay is open, and the handler skips modifier keys, an open confirm dialog and focused inputs. But a rebind is not respected, and pressing left/right on a focused button inside the board flips the floor (minor a11y). 2) It uses CSS `:has()`, fine on current browsers. 3) With 2+ floors, the panel title now also shows 'Floor N ·'. Pure client code: no server changes, network calls or secrets. isConfirmOpen and openOverlay already exist upstream.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "On 157efde: `git cherry-pick -n 16c84aa 0d411c9 53c5df5` (clean: styles.css, KanbanView.tsx, kanbanFloors.ts and its test, e2e/kanbanFloors.spec.ts; the last two commits only touch CSS and the e2e spec). Then, to match the codebase convention, either route the keys through keymap.ts (new prevFloor/nextFloor actions in a panel scope, checking scopesOverlap so the conflict check doesn't flag the move-scope arrows) or accept the hard-coded keys knowingly. The pure floorStep and its tests carry over unchanged. Its styles.css hunks don't overlap the other candidates'.",
+     "notes": "floorStep sorts by floor and wraps, and returns null for fewer than 2 floors or an unknown id. Unit tests cover these cases. Hooks are placed before KanbanView's early return, so the hook order is fine."
+    },
+    {
+     "id": "eddie-compact-chat-thoughts",
+     "exists_as_described": false,
+     "already_upstream": "no",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "1) Changes the default for existing users: TerminalView's `view` state defaults to 'chat'. Terminal-runtime agents (the default runtime) now open on the ChatView, not the live CLI; typing into the CLI needs the Terminal tab, and switching tabs remounts LiveTerminal. Codex and OpenCode report only turn endings, so their chat view is nearly empty. 2) Likely duplicate thoughts: cliRunner follows Claude's `transcript_path` from offset 0 the first time it sees a path, and its `seenThoughts` set is per startCliSession. A resumed session (fix rounds, follow-ups via --resume) or a keepAlive re-adopt re-reads the existing transcript, so every earlier thinking block is logged again out of order. Plausible, not run. 3) Claimed Codex rollout support is not wired up: codexReasoning() exists and is tested but has no caller, and thoughtsSupported('codex') returns false. So the description overstates it. 4) Polls the transcript with synchronous fs.statSync/readSync and JSON.parse every 1.5 s per Claude session on the server's main thread. Transcript lines can be large (tool results, base64 screenshots). 5) Depends on CLI-internal formats (Claude Code transcript JSONL, OpenCode message parts). The fixtures pin Claude Code 2.1.114 and OpenCode 1.4.10. Newer models may write empty or redacted thinking, in which case nothing shows. 6) The model's full reasoning (up to 4,000 chars per block) goes to every tab that opens the terminal, including LAN visitors with --host. More log bytes per session, and server/scale.test.ts budgets were not checked. 7) The server reads whatever path a hook body's transcript_path names. The hook endpoint needs a token, so low risk. 8) The OpenCode plugin (clis.ts) now also posts `reasoning` arrays in its TurnComplete hook. No external network calls added. The SDK runtime now logs the real thinking text instead of the '✻ Thinking…' placeholder, and logs nothing when the text is empty.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "Only e895961 (branch swarm/issue-26-alan). Its fork-only ancestors (5beb2bb, c7bb4e4, 1073f36, 9faf439, f6abe30) are not needed: `git cherry-pick -n e895961` alone applies cleanly to 157efde (11 files). Before committing, adapt: (a) in client/src/ui/TerminalView.tsx, default `view` to 'terminal' (or remember the choice per browser) so current users keep the live CLI. (b) In server/cliRunner.ts noteTranscript, start a newly seen transcript at its current size (fs.statSync(p).size) instead of 0, or skip entries older than the session start, so resumed or adopted sessions don't replay old thoughts. (c) Wire codexReasoning or delete it, and stop claiming Codex support. (d) Consider a per-office setting to hide reasoning from visitors. Stacks cleanly with eddie-floor-budgets (styles.css) and terminal-touch-scroll (LiveTerminal untouched; it is just behind a tab now). It shares TerminalView's MessageBox with long-messages-60k without textual overlap.",
+     "notes": "exists_as_described is false only because of the Codex claim: Claude transcript and OpenCode reasoning support exist, Codex rollout support does not. All imports it needs exist upstream (Markdown, agentLabel, workerCli, the clis store field). The 8 upstream commits since merge-base d3b47c6 caused no textual conflict."
+    }
+   ],
+   "cross_feature_conflicts": "All five were applied together on 157efde (verify-wt/budgets-small-ux: 9faf439 + e895961 cherry-picked, then the mysteryreloaded patches applied). There were no conflicts between candidates. The only failure was the MessageBox.tsx hunk of 4286dec, which conflicts with upstream itself (the fork-only `useTouch` import), not with another candidate. Shared files with non-overlapping hunks: client/src/styles.css (budgets, chat-thoughts, touch-scroll, kanban), client/src/ui/ManagerConsole.tsx (budgets BudgetRow vs 60k CEO input maxLength), server/swarm.ts (budgets: PersistedRepo, onFinished, startIssueWork, schedule; 60k: message, messageCeo, postMessage), client/src/ui/TerminalView.tsx (chat-thoughts; it hosts LiveTerminal from touch-scroll and MessageBox from 60k). Interactions: chat-thoughts puts LiveTerminal behind a Terminal tab, so touch-scroll only matters once that tab is open. Budgets and chat-thoughts both come from iAreEddie, and e895961 does not need 9faf439 even though 9faf439 is its ancestor. Suggested order: eddie-floor-budgets (9faf439 + replay guard), long-messages-60k (4286dec + MessageBox import fix), terminal-touch-scroll (2d5b0ea + LiveTerminal hunk of 37d6148), kanban-floor-flip (16c84aa, 0d411c9, 53c5df5), eddie-compact-chat-thoughts last (e895961 + default-view and offset fixes), so the riskiest UI-default change lands on its own. Test worktrees, left clean at 157efde: C:/Users/peti/AppData/Local/Temp/claude/c968d675ef2f985c/23326b94-69a1-40d9-887d-ac86b5b528d8/scratchpad/verify-wt/budgets-small-ux (iAreEddie clone) and C:/Users/peti/AppData/Local/Temp/claude/c968d675ef2f985c/23326b94-69a1-40d9-887d-ac86b5b528d8/scratchpad/verify-wt/budgets-small-ux-mr (mysteryreloaded clone). Patch files are in C:/Users/peti/AppData/Local/Temp/claude/c968d675ef2f985c/23326b94-69a1-40d9-887d-ac86b5b528d8/scratchpad/budgets-small-ux-patches. A stray C:/Users/peti/AppData/Local/Temp/claude/c968d675ef2f985c/23326b94-69a1-40d9-887d-ac86b5b528d8/scratchpad/37d6148-code.patch was left because deleting it was blocked."
+  },
+  {
+   "group": "dashboard-2d",
+   "verdicts": [
+    {
+     "id": "supermini-dashboard-shell-routing",
+     "exists_as_described": true,
+     "already_upstream": "partially",
+     "applies_to_157efde": "clean",
+     "conflict_files": [],
+     "tests_included": true,
+     "hidden_risks": "1) Default view flipped: in 956c415, mode.ts's pickMode drops its narrow/touch inputs and returns 'dashboard' unless ?office=3d, ?pocket=0 or saved 'office' says otherwise. Every existing desktop user would land on the 2D dashboard, and a saved 'pocket' now maps to the dashboard. e2e/helpers.ts (goto('/')) and scripts/bench.mjs ('/?stats') would then open the dashboard instead of 3D, which breaks the 3D e2e specs and the benchmark. Inverting it is not the 'one line' claimed: you have to restore narrow/touch in pickMode and startMode, then rewrite mode.test.ts and docs/pocket.md (about 10 lines). 2) Bundle regression: Shell.tsx statically imports ui/SetupWizard, which on 157efde imports world/Player. An import-closure check of the Shell chunk with only 956c415+9708589 found three, @react-three/fiber, @react-three/drei and BufferGeometryUtils (178 modules), so phones would start downloading three.js. Upstream pocket has none of these. Fix with prerequisites be974ac (plus beaeed9 for its context). With them, the closure has no three. 3) net.ts now sends a different watch depending on mode. With all floors selected the dashboard watches floor -1 (no floor lines). The server contract is unchanged: parseWatch is untouched and caps agents at 20. 4) useRoute rewrites the URL with replaceState/pushState and strips ?tab=. No server changes, no new deps, no external calls, secrets, telemetry or CLI flags. Description error: ActivityFeed is not in these commits. It ships in the metrics PR (339e174/fd4c5c4).",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "On a branch from upstream/main (157efde): 1) Prerequisites, verified to apply cleanly in this order: git cherry-pick beaeed9 be974ac 1fa3721 1127a2b d0fa65e. Optionally add the bundle guard: 8af894f fa0902d (before be974ac), then 6e80c21 d023950. The fork's own order with all of these applied cleanly. 2) git cherry-pick 956c415 9708589 (clean). 3) git cherry-pick facd5b9 (settings sections). It only applies after be974ac+d0fa65e (otherwise a ManagerConsole.tsx conflict), and every later dashboard PR needs it as Roles.tsx context. 4) Hand-adapt client/src/pocket/mode.ts: restore the narrow/touch inputs so desktop defaults to 'office' and narrow/touch screens default to 'dashboard'. Update mode.test.ts and the docs/pocket.md paragraph to match. Do not import 708f9b8 (VITE_OFFICE_3D flag), 09b20d3 (deletes the 3D office), c7f87a5 (fork docs/package metadata) or anything after 78a4d42 except 951c3af.",
+     "notes": "Commits exist and do what is described (rail, hash routes, floor picker, drawer with topDialog in dialogFocus, setup wizard, ?tab= link mapping, badges, dashboardWatch). Every symbol badges.ts uses (needsManager, waitingOnYou, approvalsBadge, unreadMessages, ops.alarms, doctor) exists upstream. Nothing like client/src/dashboard exists upstream, and no upstream commit title matches. 'Applies clean' is textual only. Without the decoupling commits it ships three.js to phones."
+    },
+    {
+     "id": "supermini-dashboard-reviewer-panel",
+     "exists_as_described": true,
+     "already_upstream": "partially",
+     "applies_to_157efde": "needs-other-feature-first",
+     "conflict_files": [
+      "client/src/dashboard/Roles.tsx"
+     ],
+     "tests_included": true,
+     "hidden_risks": "Undeclared dependencies: ReviewPanel imports recentQaRecord from ../qaRecord (created by beaeed9, absent upstream) and useCardActions from ui/KanbanView (created by the kanban commit ed41ed8). It also imports StatusPill from ui/TerminalView, which on 157efde imports world/camera/rig, so the dashboard chunk gets three.js unless be974ac is in. Standalone: modify/delete conflict on Roles.tsx. On shell+badges: content conflict on Roles.tsx (it was written on top of facd5b9). AppViewer gets an optional `embedded` prop that leaves the 3D path unchanged. The App tab mounts AppViewer for a PR, which starts that PR's preview through the existing preview machinery (installs and runs the floor's app). This is existing behavior, now one click away. Merge / Merge anyway reuse the existing api.mergePull through useCardActions with confirm dialogs. No new endpoints, no auto-merge, no external calls beyond GitHub hrefs.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "After the shell recipe (prereqs beaeed9 be974ac 1fa3721 1127a2b d0fa65e, plus 8508d11 d49d665, 956c415 9708589 facd5b9), apply the fork's first-parent PR diffs in order with git -C <fork> diff A B | git apply --3way --index: 97c3508..fd4c5c4 (metrics), fd4c5c4..0c314d2 (CEO), 0c314d2..8054e25 (kanban: required for useCardActions), 8054e25..9260776 (review part 1 = 813b057 as merged), 9260776..227698b (terminals, optional), 227698b..78a4d42 (review part 2 = beae038+ba23b7e as merged). All of these were verified clean on 157efde in this order. Raw 813b057/beae038/ba23b7e do not cherry-pick cleanly because their parents contain the sibling merges. If you skip CEO or terminals, expect a Roles.tsx import-line conflict (one small hunk) to resolve by hand.",
+     "notes": "Highest-value piece, and the claim about its content holds: reviewQueue groups, autoMergeNote and reviewActions are pure and tested in review.test.ts, with Report/Screenshots/App/Actions tabs. Effort is not S/low: it needs the shell, settings, pure helpers and the kanban refactor first."
+    },
+    {
+     "id": "supermini-dashboard-ceo-panel",
+     "exists_as_described": true,
+     "already_upstream": "partially",
+     "applies_to_157efde": "needs-other-feature-first",
+     "conflict_files": [
+      "client/src/dashboard/Roles.tsx",
+      "client/src/ui/ManagerConsole.tsx",
+      "client/src/ui/consoleSections.tsx"
+     ],
+     "tests_included": true,
+     "hidden_risks": "Standalone on 157efde: modify/delete conflicts on Roles.tsx and consoleSections.tsx, plus a content conflict on ManagerConsole.tsx. On shell+badges it still conflicts. It needs facd5b9, and facd5b9 itself conflicts on ManagerConsole.tsx unless be974ac and d0fa65e go first. It moves the 3D console's CeoTab and settings code from ManagerConsole into consoleSections. That refactor touches the existing 3D console. Interview gets an onClose prop (default closeOverlay, so the 3D path is unchanged). KanbanView IssueForm gets an autoFocus prop. The settings route (facd5b9) puts CloudSettings (pasted CLI/Upstash keys), VoiceSettings (ElevenLabs key) and OfficeUpdate (self-update trigger) into the 2D UI, which phones and --host LAN clients also get. This adds no new API exposure, since the REST is already unauthenticated, but those controls become far more reachable. The CEO screen opens a phone overlay to suppress chat toasts. The demoPropose buttons are gated on demo. All calls (planFloor, onboardFloor, ceoReview, stop, demoPropose) are existing api.ts endpoints.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "After the shell recipe (including facd5b9) and the metrics diff 97c3508..fd4c5c4: git -C <fork> diff fd4c5c4 0c314d2 | git apply --3way --index (= 8e0eb36+c40c70c as merged on main; verified clean). Raw 8e0eb36 conflicts on Roles.tsx after metrics, and raw metrics conflicts after raw CEO, because the siblings were merged in the fork. If you skip metrics, apply raw 8e0eb36 c40c70c right after facd5b9 instead (they are based on 97c3508), then hand-resolve Roles.tsx for later PRs.",
+     "notes": "Content matches the claim: CeoPanel, ceoTriage.ts with test, IssueForm with floor select, CeoSettingsCard, and the Interview dialog. The original note 'depends on decoupling and consoleSections split' was right, but 'S / low conflict / cherry-pick' is not: three files conflict on 157efde."
+    },
+    {
+     "id": "supermini-dashboard-kanban-dnd",
+     "exists_as_described": true,
+     "already_upstream": "partially",
+     "applies_to_157efde": "needs-other-feature-first",
+     "conflict_files": [
+      "client/src/pocket/Pocket.tsx",
+      "client/src/dashboard/Roles.tsx"
+     ],
+     "tests_included": true,
+     "hidden_risks": "dnd.ts (8508d11+d49d665) is pure, imports only upstream modules (shared/issues blockers, pocketData assignChoices) and cherry-picks cleanly alone. On its own it has no UI. ed41ed8+dc4cfea conflict on Pocket.tsx and Roles.tsx without the shell. On top of the shell they apply textually clean but import ../cards and ../toolVerb, which only beaeed9 creates, so it will not compile without beaeed9. DevBoard imports StatusPill from TerminalView, so three.js reaches the dashboard chunk without be974ac. KanbanView.tsx is refactored into useCardActions, CardFoot and KanbanToolbar. That code is shared by the 3D console's board and pocket, so regressions there are possible. CardView gets an `embedded` mode, and Pocket.tsx's pipeline is extracted to PipelineStrip. Drops call the existing api.assign (with waitForDeps) and api.sendToQa. No new endpoints, no external calls.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "Cherry-pick 8508d11 d49d665 early (clean on 157efde, pure + tests). After the shell recipe (beaeed9 required), plus the metrics and CEO diffs: git -C <fork> diff 0c314d2 8054e25 | git apply --3way --index (= ed41ed8+dc4cfea as merged; verified clean). If CEO is skipped, resolve the single Roles.tsx import hunk by hand (drop the CeoPanel import, keep DevBoard). Without the shell, raw ed41ed8 conflicts on Pocket.tsx and Roles.tsx.",
+     "notes": "Rules mirror the 3D/pocket paths as claimed. Tests are dnd.test.ts and boardDrag.test.ts. The reviewer panel depends on this feature (useCardActions), so it is not optional if you want the reviewer."
+    },
+    {
+     "id": "supermini-dashboard-terminal-grid",
+     "exists_as_described": true,
+     "already_upstream": "no",
+     "applies_to_157efde": "needs-other-feature-first",
+     "conflict_files": [
+      "client/src/ui/TerminalView.tsx",
+      "client/src/dashboard/Shell.tsx",
+      "client/src/dashboard/Roles.tsx",
+      "client/src/dashboard/Drawer.tsx"
+     ],
+     "tests_included": true,
+     "hidden_risks": "Standalone: conflicts on TerminalView.tsx plus modify/delete conflicts on Shell, Roles and Drawer. On shell+badges it still conflicts on TerminalView.tsx: be974ac and d0fa65e changed TerminalView's signature, and beaeed9 changed its toolVerb import. Behavior risk the claim missed: every tile is a full read-write LiveTerminal. Its fit sends {t:'resize'} and server/terminal.ts applies any viewer's resize to the agent's single shared PTY (last writer wins), so six small tiles shrink the real CLI terminal (Claude Code TUI) for every viewer. A focused tile forwards keystrokes to the CLI, and Esc interrupts the agent; the fork's own TerminalGrid header admits this. It can open up to 6 extra /ws/term sockets per tab. It also touches 3D UI: HUD.tsx now passes VisitorsList into WorkersPanel as a prop, and TerminalView gets a `frame` prop. PocketTeam's scrollIntoView effect is changed. No server changes, no external calls.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "After the shell recipe (beaeed9, be974ac, 1fa3721, d0fa65e required) and the metrics, CEO, kanban and review-part-1 diffs: git -C <fork> diff 9260776 227698b | git apply --3way --index (= a264b75+5ada49d as merged; verified clean). Adapt before shipping: make grid tiles not send resize (add a LiveTerminal prop that skips the resize send, or read-only tiles) so the agent's PTY keeps the size of the full terminal view.",
+     "notes": "terminalTiles.ts is pure and tested (MAX_TILES 6, gridShape, selection). 'S / low conflict / cherry-pick' is wrong: it conflicts on an upstream file and has a real PTY-resize side effect."
+    },
+    {
+     "id": "supermini-dashboard-metrics-timelapse",
+     "exists_as_described": true,
+     "already_upstream": "partially",
+     "applies_to_157efde": "needs-other-feature-first",
+     "conflict_files": [
+      "client/src/dashboard/Shell.tsx",
+      "client/src/dashboard/Roles.tsx"
+     ],
+     "tests_included": false,
+     "hidden_risks": "Standalone: modify/delete conflicts on Shell.tsx and Roles.tsx. On shell+badges, 339e174 59b0836 5240ede 951c3af apply cleanly. Bundle regression: Shell now statically imports ReplayBar from ui/TimeLapse, which pulls in replay.ts, then world/sky/useDayTime, then @react-three/fiber (verified by import closure). Phones get R3F unless 1127a2b (effect registry) is applied first. This PR also adds ActivityFeed to the dashboard top bar (the description attributed it to the shell). The TimeLapse.tsx change is additive (a `dashboard` prop that only changes wording). The 2D replay claims 'assigning, messaging and merging are off', but this PR adds no guard on the dashboard's own action buttons (not verified further). 951c3af is CSS only. No tests, no server changes, no external calls.",
+     "verdict": "downgrade",
+     "corrected_recommendation": "port-adapt",
+     "import_recipe": "After the shell recipe, which must include 1127a2b: git -C <fork> diff 97c3508 fd4c5c4 | git apply --3way --index (fd4c5c4 is main's squash of 339e174+59b0836+5240ede, identical content; verified clean), or cherry-pick 339e174 59b0836 5240ede. Apply it before the CEO diff (fd4c5c4..0c314d2), which is based on it. Then git cherry-pick 951c3af last (CSS only; clean).",
+     "notes": "Thin glue, as claimed: MetricsPanel mounts the upstream OpsTab and TimeLapseTab, and the ticker store field already exists upstream. Cheap once the shell and effects prerequisites are in, but not cherry-pickable alone."
+    }
+   ],
+   "cross_feature_conflicts": "All six features share client/src/dashboard/Roles.tsx (each replaces a placeholder screen and adds an import). Shell, metrics and terminals also share Shell.tsx. CEO, kanban and review share ui/KanbanView.tsx: CEO adds IssueForm autoFocus, kanban extracts useCardActions/CardFoot/KanbanToolbar, and review consumes useCardActions. Kanban, review, terminals and CEO all import StatusPill from ui/TerminalView, which needs be974ac to stay free of three.js. The fork built CEO, kanban, review, terminals and metrics as parallel branches off 97c3508 and joined them with merge commits. Raw sibling commits therefore conflict on Roles.tsx in any order (tested: metrics then raw 8e0eb36 conflicts, and raw 8e0eb36 then raw 339e174 conflicts). Working order, verified clean on 157efde in a scratch worktree: (1) prerequisites beaeed9 be974ac 1fa3721 1127a2b d0fa65e 8508d11 d49d665 (optionally add 8af894f fa0902d and the guard 6e80c21 d023950 in the fork's order); (2) shell 956c415 9708589 facd5b9; (3) first-parent PR diffs via git diff A B | git apply --3way --index: 97c3508..fd4c5c4 (metrics), fd4c5c4..0c314d2 (CEO), 0c314d2..8054e25 (kanban), 8054e25..9260776 (review 1), 9260776..227698b (terminals), 227698b..78a4d42 (review 2/theatre); (4) cherry-pick 951c3af. Shortcut with the same result plus the sfx/phone/guard decoupling: git -C <fork> diff 157efde 78a4d42 | git apply --3way --index, then 951c3af. The range touches 111 files, all in client/ or docs/pocket.md, with no server/, shared/, package or e2e changes. Skipping a PR in the middle leaves a one-hunk Roles.tsx import conflict. Never import 708f9b8, 09b20d3, c7f87a5, dfc12e6, 9388523, 2329a62 or f876f17: these are the build flag, the 3D deletion, fork docs/package metadata, and cleanup that assumes 3D is gone. After importing, invert the mode.ts default by hand, otherwise desktop users, e2e and bench all land on the dashboard. The scratch worktree was reset to upstream/main and cleaned; the user's checkout was not touched."
+  }
+ ],
+ "critic": {
+  "missed_high_value": [
+   {
+    "id": "hand-merge-requeue-on-head-move",
+    "fork": "mysteryreloaded/software-development-factory",
+    "why": "Same invariant as branch-update-requeues-qa, but for auto-merge-off floors: a passed PR whose branch gets new commits stays 'passed' on the old SHA forever, so the manager can merge untested code. The RFC digest notes the real legacy gap is the manual merge path (head-match already exists on auto-merge). 80 lines, a pure movedSincePass(), tests. It belongs in the wave 1 merge-gate cluster (FR-033, WF-015)."
+   },
+   {
+    "id": "per-agent-model-override-fix",
+    "fork": "mgscox/cubefarm",
+    "why": "Fixes upstream bug #322: a kept-alive CLI is adopted for the next session even when the requested model differs. Also keeps a per-CLI default model. Stage-level model routing (WF-013, SLICE-P1-1) silently runs the wrong model without it. S, low conflict, q4."
+   },
+   {
+    "id": "claude-only-usage-brakes",
+    "fork": "mysteryreloaded/software-development-factory",
+    "why": "The audit says to port it as one unit with per-cli-session-limits (wave 2), but it was dropped. Without it, a Claude 5-hour limit stalls Codex/OpenCode desks too, which cancels out the multi-CLI work in wave 1 (ceo-any-cli, opencode2-compat). Pure pacing logic, 127 lines."
+   },
+   {
+    "id": "blocked-by-heading-and-release-held",
+    "fork": "mysteryreloaded/software-development-factory",
+    "why": "Cherry-pick, applies cleanly, tested. Planners (the ideas pipeline, AI Factory plans, CEO-written issues) write dependency lists as headings, and today the scheduler starts that blocked work. The cheap precursor to native-github-dependencies-subissues and the WF-014 bridge."
+   },
+   {
+    "id": "scheduling-gates",
+    "fork": "mgscox/cubefarm",
+    "why": "issueClaims.ts fixes a double-claim bug across assign/resume/reconnect (WF-007: 'no double start after restart'). It adds ready-for-human, draft and untriaged gates and backoff after empty sessions. Port the pure predicates, not the role-based scheduler glue."
+   },
+   {
+    "id": "live-usage-meter",
+    "fork": "mysteryreloaded/software-development-factory",
+    "why": "Upstream already parses the statusline rate_limits and throws them away. Keeping the 5-hour and weekly readings is the cheapest telemetry step (FR-053), and Box statusline helpers already forward them. Do it before eddie-cost-telemetry."
+   },
+   {
+    "id": "tubadog-decision-alerts",
+    "fork": "TubadoG/cubefarm",
+    "why": "Closes the RFC gap 'approval requests are not mapped to the existing notifier'. Pure Decision builder plus ntfy action buttons deep-linking to the approval card. Ship with or right after tubadog-decision-room."
+   },
+   {
+    "id": "tubadog-decision-digest",
+    "fork": "TubadoG/cubefarm",
+    "why": "Token-free daily summary of pending decisions (FR-052, zero LLM when idle). Port buildDigest only and deliver through upstream's notifier/webhooks, not the Microsoft Graph email path."
+   },
+   {
+    "id": "eddie-upstream-drift-check",
+    "fork": "iAreEddie/cubefarm",
+    "why": "Closes the RFC gap 'fork maintenance strategy is absent' and the open question about target repo and upstream churn. VisualFactory has no upstream remote, and every port adds swarm.ts drift. Make it off by default (it does a daily fetch)."
+   },
+   {
+    "id": "kk-fork-safety-guide",
+    "fork": "konstantinknappe-hash/cubefarm",
+    "why": "Fork policy: fork-only features in new files with minimal hooks, a sync procedure and a change ledger. That policy is what keeps 40+ imported features mergeable with upstream. Rewrite it for VisualFactory before wave 2 starts."
+   },
+   {
+    "id": "eddie-dead-cli-watchdog",
+    "fork": "iAreEddie/cubefarm",
+    "why": "Fixes a real stranding case: the keeper stops a CLI after ORPHAN_MS and the agent shows as working forever. watchdog.ts is unchanged upstream since the fork base, so the pure part ports cleanly. Fold watchdog-current-cli in as well (36 lines; mixed-CLI offices get false stalls)."
+   },
+   {
+    "id": "resume-session-same-cli",
+    "fork": "mysteryreloaded/software-development-factory",
+    "why": "Once agents switch CLI or model per stage, a session must resume only in the CLI that made it. ceo-any-cli covers only the CEO. The pure resumeChoice() plus devSessionCli on QA records are needed for workers too (WF-013)."
+   },
+   {
+    "id": "eddie-live-playtest",
+    "fork": "iAreEddie/cubefarm",
+    "why": "Closes two RFC gaps: visual-factory UX is underspecified, and PR theatre/QA evidence is not wired into UX review stages. Humans watch what QA actually exercises. L and high conflict, so it is a wave 3 candidate, but it is the most 'visual factory' feature found."
+   },
+   {
+    "id": "nano-workforce-bpmn-mode",
+    "fork": "nanobpm/cubefarm",
+    "why": "Idea-only, but it is the only existing design for showing configurable workflow runs in the 3D office: instances as floors, stages as desks, a live graph on the whiteboard, human tasks as phone approvals. Direct input to WF-020 and WF-030 and to the RFC gap 'no design for how workflow runs appear in the 3D office'."
+   },
+   {
+    "id": "lessons-playbook-evaluations",
+    "fork": "mgscox/cubefarm",
+    "why": "Idea-only. Closes the RFC gap 'agent/reviewer quality evaluation': findings labelled by recurrence and verification, playbook A/B comparisons on pinned cases and cohorts, immutable reports. Pair it with developer-scores-routing, reframed to score CLI/model/effort combinations instead of named agents. Needed to tune stage-level routing."
+   },
+   {
+    "id": "company-management-non-github",
+    "fork": "Saredigital/cubefarm",
+    "why": "Idea-only. The only concrete data model for WF-026 and ADR-015: projects without a repo, a task DAG, versioned deliverables with per-version review decisions (accepted/changes_requested/rejected), and budget reservation per run. Use it as schema input to WF-002."
+   },
+   {
+    "id": "issue-filing-idempotency",
+    "fork": "localloop-pro/cubefarm",
+    "why": "Idea-only. Operation log plus a body marker gives exactly-once issue creation (SLICE-P0-6, FR-030, NFR-002). The pattern belongs in the WF-004 store with idempotency keys, without the full-repo pagination. kk-analyst-bridge adds the matching intake shape (Idempotency-Key, outputSchema, 429 backpressure) for WF-028."
+   },
+   {
+    "id": "custom-openai-providers",
+    "fork": "mysteryreloaded/software-development-factory",
+    "why": "Closes the RFC gap 'non-coding stages have no cheap or direct model option': any OpenAI-compatible endpoint, run through OpenCode, with a Providers tab. Merge it with upstream #311 local models into one 'model endpoints' registry after the OpenCode version decision. anthropic-gateway-litellm is the companion for metering Claude Code (closes 'Codex/OpenCode cost absent' at the gateway level)."
+   },
+   {
+    "id": "merge-queue-rebase",
+    "fork": "mgscox/cubefarm",
+    "why": "Rebase with expectedHeadOid and verification of the expected tree is the only fork answer to WF-015 'no head race' when many agent PRs merge in parallel. Port it with github-read-robustness and actions-never-started-rerun, which cover the WF-017 truth table (no checks:read token, billing-blocked jobs that burn fix rounds)."
+   },
+   {
+    "id": "bun-aware-installs",
+    "fork": "mysteryreloaded/software-development-factory",
+    "why": "Generalize it to package-manager detection (pnpm, yarn, bun). The owner's own repos use pnpm and upstream installs with npm, so desks and previews of the owner's projects install wrongly. A precondition for 'multi-repo' being real."
+   },
+   {
+    "id": "connect-floor-options",
+    "fork": "rosariomoscato/droidsembly",
+    "why": "About 30 lines: connect a project with auto-merge off and no CEO onboarding. That is the opt-in default ADR-009 and FR-005 want, and it is safer than auto-merge-default-off's silent flip."
+   },
+   {
+    "id": "fleet-ssh-workers",
+    "fork": "mgscox/cubefarm",
+    "why": "The owner runs on-prem servers. An SSH MachineProvider next to local and Upstash lets the factory use them. XL and conflicting, so rebuild it as a third provider later, not a merge."
+   }
+  ],
+  "overlaps_needing_a_choice": [
+   {
+    "topic": "CEO on any CLI",
+    "options": [
+     "ceo-any-cli (francovp, upstream PR #299, fast-forward from 157efde, ceoRuntime tests, read-only per CLI)",
+     "kk-ceo-codex-opencode (120 lines, but leaves a Codex/OpenCode CEO with shell, depends on kk-model-catalog)",
+     "telemove-ceo-on-opencode (OpenCode only, bash:'allow' keeps shell)",
+     "eddie-ceo-any-cli (800 lines, 10-file conflict, switches OpenCode to run mode against keepAlive)",
+     "acp-agent-runtime (nanobpm, CEO on any ACP agent, auto-approves every permission)",
+     "opencode-v2-runtime CEO part (droidsembly, OpenCode 2 only)"
+    ],
+    "recommendation": "Take only ceo-any-cli (625e1df + 7685466). It is the only one that keeps the CEO read-only on every CLI (Codex --sandbox read-only, OpenCode denies edit/bash/task). Drop telemove-ceo-on-opencode and kk-ceo-codex-opencode from wave 1: they are strict subsets with a shell hole. Keep acp-agent-runtime's pure acp.ts as a later worker runtime, not a CEO path."
+   },
+   {
+    "topic": "OpenCode 2 support",
+    "options": [
+     "opencode2-compat (mysteryreloaded, 267 lines, folder plugin, --standalone, model in config)",
+     "opencode-v2-runtime (droidsembly, 1450 lines, refuses OpenCode 1.x, rewrites upstream #311 opencodeLocal config)",
+     "opencode-v2-support (Calel33, cached opencode --version detection, effort as model#variant, 0.3.18 base)",
+     "codex-opencode-runtime-fixes (mgscox, v2 completion and lost-turn recovery, captured screen fixtures)"
+    ],
+    "recommendation": "First decide whether OpenCode 1 stays supported. Upstream #311 local models and francovp's ceo-any-cli both assume the OpenCode 1 schema and --model. If both versions stay: use Calel33's version detection as the switch and opencode2-compat's plugin/standalone code as the v2 branch, keep the v1 path untouched, and reuse mgscox's opencodeScreens fixtures for tests. Do not take droidsembly's runtime (it drops v1 and rewrites local-model config). Until that decision, opencode2-compat does not belong in wave 1."
+   },
+   {
+    "topic": "Cost and usage telemetry",
+    "options": [
+     "eddie-cost-telemetry (normalized UsageRecord for Claude/Codex/OpenCode, dated rate table, provenance reported/estimated/free/unavailable, 450 lines of tests)",
+     "multi-provider-ai-usage (droidsembly, per-message observations plus a QuotaGate per hashed account; state.aiUsage grows without bound in state.json, no demo fake)",
+     "run-history-telemetry (mgscox, per-attempt records in files: routing factors, CLI/model/effort, playbook hash, revisions)",
+     "live-usage-meter (mysteryreloaded, rate-limit gauges)",
+     "anthropic-gateway-litellm (meter at a gateway)"
+    ],
+    "recommendation": "One schema and one store, not three. Use eddie-cost-telemetry's parsers and UsageRecord as the observation type: its provenance field is exactly NFR-010 and FR-050 (reported vs estimated vs unknown). Wrap it in mgscox's run-history attempt envelope as the per-attempt record, stored in rotated files (and later in WF-004), never in state.json. Take droidsembly's QuotaGate only as a later design idea for multiple accounts per CLI. Ship live-usage-meter first as the cheap win."
+   },
+   {
+    "topic": "Per-provider limits, brakes and failover",
+    "options": [
+     "per-cli-session-limits + claude-only-usage-brakes (mysteryreloaded, pure, tested, one unit)",
+     "multi-provider-ai-usage QuotaGate (per account resource)",
+     "kk-claude-codex-failover (CLI-scoped pause plus automatic Claude-to-Codex switch at 85%)",
+     "session-slot-reservation (localloop, reserve before async preparation, keep one slot for the CEO)"
+    ],
+    "recommendation": "Port the mysteryreloaded pair together and fold localloop's reserve-before-prepare rule into the same cliFull() path: both rewrite slotsFull, and two separate ports would conflict. Add kk failover later as an explicit, visible, opt-in routing rule under WF-013 (it silently moves work to another billing account and model)."
+   },
+   {
+    "topic": "Merge gate core",
+    "options": [
+     "fail-closed-merge-gate (localloop: pure typed refusals, one PR read, exact passed SHA, manual and auto merge share one path)",
+     "ceo-manager-approved-merge (mgscox: head-pinned preflight plus manager-approved CEO merge)",
+     "merge-queue-rebase (mgscox: verified rebase queue)",
+     "ceo-code-review-gate (mysteryreloaded: extra approver SHA in mergeStep)",
+     "tubadog-merge-holds / tubadog-routine-only-automerge (hold reasons)"
+    ],
+    "recommendation": "These are layers, not alternatives. Make fail-closed-merge-gate's pure mergeGate() the single decision point. Holds, routine-only, CEO/code review and the security review then become typed refusal reasons inside it, not separate checks in advanceMerge. Use mgscox's head-pinned mergePr preflight as the explicit, audited human override (FR-035) that localloop removed. Adapt localloop's policies first: checks 'none' needs an explicit per-floor policy (ADR-011), and mergeState must accept UNSTABLE/HAS_HOOKS where configured."
+   },
+   {
+    "topic": "Re-QA when the head moves (SHA binding)",
+    "options": [
+     "branch-update-requeues-qa (after update-branch)",
+     "hand-merge-requeue-on-head-move (manual-merge floors)",
+     "paul-merge-gate-findings #1 (same bug, docs only)"
+    ],
+    "recommendation": "Implement one rule ('passedSha must equal the current head, else requeue') with one pure helper covering the update-branch, hand-merge and auto-merge paths, plus a per-floor 'trust CI for base-only merges' policy. Paul's findings #2 (pass verdict with a failed check) and #3 (evidence publish failure) become extra gate rules."
+   },
+   {
+    "topic": "Read-only analysis / non-PR agent tasks",
+    "options": [
+     "read-only-analysis-task (droidsembly: per agent, no issue/worktree/PR, main checkout, demo fake, current base; woven into the OpenCode V2 commit)",
+     "analysis-tasks-reports (Saredigital: swarm:analysis issue, stored report, CEO read_report, 'send to CEO'; Spanish, posts and closes issues)",
+     "kk-analyst-bridge (external token API with outputSchema and idempotency)",
+     "researchers-research-docs (mgscox: research role, docs by PR)"
+    ],
+    "recommendation": "Use droidsembly's shape (no GitHub side effects, no desk) as the template for the WF-008 ai.task executor. Take Saredigital's 'report becomes a stored artifact and is handed to the CEO' as the WF-009 handoff. Don't port either as a standalone task type into swarm.ts: it would be replaced by WF-008 within one phase. Keep kk-analyst-bridge as the WF-028 intake pattern only."
+   },
+   {
+    "topic": "2D dashboard",
+    "options": [
+     "supermini (78a4d42: role shell, reviewer panel, CEO panel, Kanban DnD, terminal grid; 0 behind, server untouched, noWorldImports guard)",
+     "dashboard-2d-view (mgscox: terminal tiles plus console, older store)",
+     "desktop-2d-control-panel (Saredigital: deletes the 3D office, Spanish)"
+    ],
+    "recommendation": "supermini at 78a4d42 with pickMode flipped so 3D stays the desktop default, plus its copyright line in LICENSE. mgscox's tiles are covered by supermini's terminal grid. Use Saredigital's Overview/Board/Agents/Launch/Approvals/Reports layout only as a blueprint for the WF-020 workflow screens."
+   },
+   {
+    "topic": "Approval inbox",
+    "options": [
+     "existing upstream HireRequestView + /api/requests/:id/approve|reject + PocketApprovals",
+     "tubadog-decision-room (briefs, one-tap answers, Ask-the-CEO thread)",
+     "mgscox ideas approval card",
+     "supermini CEO panel approvals",
+     "manager-refinement-after-qa 'Request changes' on Kanban"
+    ],
+    "recommendation": "One generic ApprovalRequest that extends HireRequestView (the RFC gap explicitly asks for this). tubadog-decision-room becomes its UI. Ideas/spec approvals, merge holds and manager refinement post into it. Bind each request to a target hash and keep a decidedBy actor (FR-023). Otherwise wave 2 ships a third and fourth approval surface."
+   },
+   {
+    "topic": "Idea / work-item intake",
+    "options": [
+     "faustosip-idea-wall (q5, pure shared/ideas.ts status machine new->seen->planned->shipped, shipped detection from merged PRs)",
+     "idea-wall (Calel33, the same upstream closed PR #276)",
+     "ideas-prd-review-publication (mgscox Idea -> PRD -> reviews -> publication)"
+    ],
+    "recommendation": "faustosip's shared/ideas.ts as the WorkItem intake (ADR-001, FR-010). Lift mgscox's pure modules (ideaReview.ts, issuePlan.ts, proposals.ts, publication.ts) as the plan/spec/review stage logic on top. Use one entity name, the RFC's WorkItem, not two kinds of 'idea'. Skip the corkboards."
+   },
+   {
+    "topic": "Folder-trust prompt fix",
+    "options": [
+     "kk-trust-prompt-fixes (31 lines, clean cherry-pick, trust key only)",
+     "faustosip-trust-prompt-fix / folder-trust-under-older-screens (the same upstream closed PR #286: also the hook-review key, watching adopted CLIs, holding follow-ups until the menu is gone)"
+    ],
+    "recommendation": "Cherry-pick kk now. Then hand-port #286's adopted-CLI watch and hook-review handling, because ceo-any-cli makes a reused CEO terminal showing another CLI's menu the common case. Check why upstream closed #286 first (possibly superseded by #288)."
+   },
+   {
+    "topic": "Request boundary / origin checks",
+    "options": [
+     "ws-origin-check (mgscox: WS only, aware of SWARM_HOST/LAN names)",
+     "loopback-request-boundary (localloop: HTTP + WS, Sec-Fetch-Site, Origin required on unsafe methods; hard-coded loopback breaks --host, pocket over LAN and the preview gateway)",
+     "session-token-api-auth (localloop main, q2)",
+     "exec-remote-transport (client half only)"
+    ],
+    "recommendation": "One middleware: localloop's pure officeRequest policy with mgscox's SWARM_HOST-aware allowlist, applied to both HTTP and upgrade. Neither fork handles upstream #310's preview gateway: agent-built preview pages are same-origin at /preview/<port>/ and pass both checks. That needs its own rule (for example refuse unsafe /api calls whose Referer is under /preview/). Token pairing only when not on loopback (WF-029 later)."
+   },
+   {
+    "topic": "Desk work preservation",
+    "options": [
+     "save-desk-work-before-reuse (mysteryreloaded: never blocks, saves untracked files, Windows chunking)",
+     "workspace-commit-preservation (localloop: recovery refs, but guardWorktree throws on dirty desks and stalls agents)"
+    ],
+    "recommendation": "save-desk first (wave 1). Then add only localloop's preserveCommit refs under refs/cubefarm-recovery with pruning, not the throwing guardWorktree. Both edit setUpWorktree, so one owner and one sequence."
+   },
+   {
+    "topic": "Global stop switch",
+    "options": [
+     "global-scheduler-pause (localloop: persisted, rechecked after every await and before merge)",
+     "close-office (mgscox: drain plus hold across restarts)",
+     "box-daily-operations pause of new cloud work (droidsembly)"
+    ],
+    "recommendation": "One persisted pause, re-implemented on upstream's scheduler with localloop's 353-line test as the spec. Add close-office's 'safe to shut down' indicator only if upstream's office-update drain does not already give it. The cloud-only pause becomes a scope of the same switch, not a second one. WF-007 needs exactly one paused flag."
+   },
+   {
+    "topic": "Copilot and extra CLIs",
+    "options": [
+     "copilot-cli-agent (francovp: a hand-written fourth CLI, unverifiable flags, speculative model ids)",
+     "acp-agent-runtime (nanobpm: one protocol adapter for any ACP agent, including Copilot)"
+    ],
+    "recommendation": "Defer both until a per-CLI capability matrix exists (RFC gap: structured output, cost, resume, hooks, screenshots per CLI). If one is needed sooner, prefer ACP's pure layer for breadth. Every hand-written CLI adds a row to the cost parsers, model catalog, session limits and QA pairing."
+   }
+  ],
+  "rfc_mapping": [
+   {
+    "rfc_item": "WF-001 baseline and safety tests",
+    "fork_features": [
+     "paul-merge-gate-findings",
+     "crash-recovery-pr-reconcile",
+     "story-epic-review-protocol"
+    ],
+    "how": "Turn Paul's three merge-gate findings and localloop's crash matrix into characterization and regression tests against current upstream before changing behaviour. localloop's 'Base: <branch> @ <sha>' story contract is a usable baseline format."
+   },
+   {
+    "rfc_item": "WF-002 shared domain schemas",
+    "fork_features": [
+     "tubadog-decision-briefs",
+     "qa-findings-and-evidence",
+     "eddie-cost-telemetry",
+     "run-history-telemetry",
+     "company-management-non-github",
+     "faustosip-idea-wall",
+     "ideas-prd-review-publication"
+    ],
+    "how": "Decision = TubadoG brief, with recommendsMerge turned into an enum. Finding = mgscox's stable-ID finding (this settles the RFC's own inconsistency about stable vs per-row finding IDs). StageAttempt = run-history record with eddie's UsageRecord inside. Artifact version and review = Saredigital deliverables. WorkItem intake = faustosip ideas. PRD and Issue Plan = mgscox's shared/ideaReview.ts."
+   },
+   {
+    "rfc_item": "WF-003 workflow config parser / conditions",
+    "fork_features": [
+     "tubadog-merge-holds",
+     "tubadog-routine-only-automerge",
+     "repo-managed-skills-specialisms"
+    ],
+    "how": "No fork has a workflow DSL. Holds' gitignore-style globs and routine-only's rule groups are ready-made path/risk predicates for conditions. The repo-managed playbook name@sha256 should be part of the canonical definition digest."
+   },
+   {
+    "rfc_item": "WF-004 WorkflowStore / WF-016 outbox",
+    "fork_features": [
+     "run-history-telemetry",
+     "issue-filing-idempotency",
+     "tubadog-board-log-undo"
+    ],
+    "how": "Per-attempt files that survive QA cleanup and restart, an operation log with idempotency keys written before the side effect, and a typed undo log are the three record kinds the store needs. None of them provides SQLite (node:sqlite stays an open ADR-006 item)."
+   },
+   {
+    "rfc_item": "WF-005 deterministic engine (bounded loops)",
+    "fork_features": [
+     "ideas-prd-review-publication",
+     "fail-closed-merge-gate",
+     "tubadog-decision-clock"
+    ],
+    "how": "mgscox's two-reviewer, max-3-round loop with escalation is ADR-010 in practice. localloop's pure typed-refusal gate is the pattern for transition guards. Take decisionClock's deadline maths only, never its auto-apply default (it violates ADR-012)."
+   },
+   {
+    "rfc_item": "WF-006 executor registry and capability contracts",
+    "fork_features": [
+     "ceo-any-cli",
+     "tubadog-floor-lead",
+     "acp-agent-runtime",
+     "copilot-cli-agent"
+    ],
+    "how": "floor-lead's scoped office MCP tool set plus NO_SHELL, and ceo-any-cli's per-CLI read-only enforcement, show how 'capability intersection' maps onto each runtime. These use the same mechanism upstream already applies to the CEO, which is relevant to the open question about CLAUDE.md's no-refusal rule."
+   },
+   {
+    "rfc_item": "WF-007 scheduler, lease, recovery, pause",
+    "fork_features": [
+     "global-scheduler-pause",
+     "session-slot-reservation",
+     "scheduling-gates",
+     "per-cli-session-limits",
+     "claude-only-usage-brakes",
+     "crash-recovery-pr-reconcile"
+    ],
+    "how": "Pause rechecked after every await, slots reserved before async preparation, an issue-claims registry against double starts, per-provider concurrency, and 'a failed read means uncertain, not failed' in recovery."
+   },
+   {
+    "rfc_item": "WF-008 session adapter for non-code stages",
+    "fork_features": [
+     "read-only-analysis-task",
+     "analysis-tasks-reports",
+     "researchers-research-docs",
+     "kk-analyst-bridge"
+    ],
+    "how": "droidsembly shows a session with no desk, PR or issue running against the main checkout. Saredigital and mgscox show the output becoming a stored document. kk shows outputSchema plus timeout plus idempotency on a session request."
+   },
+   {
+    "rfc_item": "WF-009 immutable artifacts",
+    "fork_features": [
+     "analysis-tasks-reports",
+     "company-management-non-github",
+     "prototype-approval-workflow",
+     "eddie-file-path-reveal"
+    ],
+    "how": "Versioned deliverables with per-version review state, approval pinned to the reviewed head SHA (prototype), and a read-only file viewer reachable from messages (needs a loopback or auth guard under --host)."
+   },
+   {
+    "rfc_item": "WF-010 / WF-011 plan, spec, independent review, revision",
+    "fork_features": [
+     "ideas-prd-review-publication",
+     "eddie-qa-pairing",
+     "qa-findings-and-evidence",
+     "tubadog-autoplan-roadmap"
+    ],
+    "how": "PRD with R1..Rn requirement IDs, two reviewers who are not the author, and findings carried forward by ID. qa-pairing's 'different CLI, then different model' is FR-031 independence. autoplan's roadmap file is a plan input, not a CEO prompt exception."
+   },
+   {
+    "rfc_item": "WF-012 decision and human approval",
+    "fork_features": [
+     "tubadog-decision-briefs",
+     "tubadog-decision-room",
+     "manager-refinement-after-qa",
+     "prototype-approval-workflow",
+     "ceo-manager-approved-merge",
+     "tubadog-decision-alerts",
+     "tubadog-decision-digest"
+    ],
+    "how": "Generalize the existing HireRequestView into an approval request bound to a target hash. The decision room is its UI, manager refinement is the changes_requested route (FR-024), and alerts/digest close the notifier gap."
+   },
+   {
+    "rfc_item": "WF-013 stage-level model routing and cost",
+    "fork_features": [
+     "eddie-cost-telemetry",
+     "run-history-telemetry",
+     "live-usage-meter",
+     "eddie-floor-budgets",
+     "kk-model-catalog",
+     "per-agent-model-override-fix",
+     "resume-session-same-cli",
+     "kk-claude-codex-failover",
+     "custom-openai-providers",
+     "anthropic-gateway-litellm",
+     "multi-provider-ai-usage"
+    ],
+    "how": "Model inventory (catalog), correct model on reused CLIs (override fix), sessions resumed only in the same CLI, per-attempt usage with provenance, budgets on top of that usage, and failover as the first deterministic routing rule. Gateway and custom providers supply the cheap non-coding stage models."
+   },
+   {
+    "rfc_item": "WF-014 CubeFarm bridge (issues once, after approval)",
+    "fork_features": [
+     "ideas-prd-review-publication",
+     "native-github-dependencies-subissues",
+     "blocked-by-heading-and-release-held",
+     "issue-filing-idempotency",
+     "scheduling-gates"
+    ],
+    "how": "mgscox's held-label + draft-title + read-back publication is a working 'no issue without approval, created once' protocol. Native blockedBy and heading parsing make the generated issue DAG schedulable."
+   },
+   {
+    "rfc_item": "WF-015 SHA-bound merge authorization",
+    "fork_features": [
+     "fail-closed-merge-gate",
+     "branch-update-requeues-qa",
+     "hand-merge-requeue-on-head-move",
+     "paul-merge-gate-findings",
+     "tubadog-merge-holds",
+     "tubadog-routine-only-automerge",
+     "merge-queue-rebase",
+     "ceo-manager-approved-merge",
+     "kk-draft-pr-ready"
+    ],
+    "how": "One pure gate with typed refusals over the exact QA-passed SHA, requeue on any head move, holds as refusal reasons, an explicit audited override (FR-035), and a verified rebase queue against head races."
+   },
+   {
+    "rfc_item": "WF-016 specialized AI code reviewers",
+    "fork_features": [
+     "ceo-code-review-gate",
+     "qa-security-review-escalation",
+     "repo-managed-skills-specialisms",
+     "eddie-live-playtest"
+    ],
+    "how": "ceo-code-review-gate is a SHA-bound reviewer with job-scoped tools: generalize it from 'the CEO on Claude' to any agent or model, and store the verdict as an artifact. The security escalation plus playbooks provide the security profile (drop its label waiver). Live playtest plus the reviewer panel provide UX evidence."
+   },
+   {
+    "rfc_item": "WF-017 deterministic checks stage",
+    "fork_features": [
+     "github-read-robustness",
+     "actions-never-started-rerun",
+     "fail-closed-merge-gate"
+    ],
+    "how": "Fallback check reads for tokens without checks:read, bounded reruns of billing-blocked jobs instead of fix rounds, and neutral/skipped-only rollups treated as 'none' (ADR-011)."
+   },
+   {
+    "rfc_item": "WF-018 conditional stages",
+    "fork_features": [
+     "tubadog-routine-only-automerge",
+     "qa-security-review-escalation",
+     "risk-proportional-verification"
+    ],
+    "how": "Path rule groups and the 'touches auth/secrets/untrusted input' trigger become trusted-fact conditions. The waiver must not come from a PR label (FR-032)."
+   },
+   {
+    "rfc_item": "WF-019 fix feedback and revalidation",
+    "fork_features": [
+     "qa-findings-and-evidence",
+     "manager-refinement-after-qa",
+     "tubadog-stuck-pr-rebuild",
+     "branch-update-requeues-qa"
+    ],
+    "how": "Open findings by ID drive the next fix, new SHAs re-run QA, and a bounded rebuild (MAX_REBUILDS=1) is the exhaustion path."
+   },
+   {
+    "rfc_item": "WF-020 workflow and artifact UI",
+    "fork_features": [
+     "supermini-dashboard-shell-routing",
+     "supermini-dashboard-reviewer-panel",
+     "supermini-dashboard-ceo-panel",
+     "tubadog-decision-room",
+     "kanban-workflow-stages",
+     "nano-workforce-bpmn-mode",
+     "eddie-compact-chat-thoughts"
+    ],
+    "how": "supermini's hash routes and role badges are the per-stage screen frame, the reviewer panel is the per-PR evidence cockpit, and the decision room is the approval inbox. nano's floors/desks/whiteboard mapping is the only design for showing runs in 3D."
+   },
+   {
+    "rfc_item": "WF-021 API and audit hardening",
+    "fork_features": [
+     "loopback-request-boundary",
+     "ws-origin-check",
+     "mcp-input-bounds",
+     "local-safety-threat-model-doc",
+     "tubadog-board-log-undo",
+     "manager-mcp-gateway"
+    ],
+    "how": "Request boundary plus WS origin plus MCP body limits close the CSRF/rebinding gap the RFC names. The threat-model doc must be rewritten for --host. The manager MCP gateway needs a distinct non-human principal before it can touch approvals."
+   },
+   {
+    "rfc_item": "WF-022 migration and docs",
+    "fork_features": [
+     "kk-fork-safety-guide",
+     "eddie-upstream-drift-check",
+     "state-quarantine-unknown-values"
+    ],
+    "how": "Fork ledger and sync procedure, a drift alert, and schema-versioned state (take only the idea: as written, the quarantine would freeze every upstream agent)."
+   },
+   {
+    "rfc_item": "WF-024 portfolio / cross-repo DAG",
+    "fork_features": [
+     "ideas-prd-review-publication",
+     "native-github-dependencies-subissues",
+     "company-management-non-github"
+    ],
+    "how": "Cross-floor issue plans with cycle checks, tracking parents auto-closed when children finish, and a task DAG that feeds accepted deliverables forward. All repo#issue-keyed, so they still need FR-040 global IDs."
+   },
+   {
+    "rfc_item": "WF-026 non-GitHub projects",
+    "fork_features": [
+     "company-management-non-github",
+     "read-only-analysis-task",
+     "nano-workforce-bpmn-mode"
+    ],
+    "how": "Departments and projects without a repo, plus stages that make zero GitHub calls. No fork has a GitLab/Jira adapter (the forge-breadth gap stays open)."
+   },
+   {
+    "rfc_item": "WF-028 external events / intake",
+    "fork_features": [
+     "kk-analyst-bridge",
+     "manager-mcp-gateway"
+    ],
+    "how": "Bearer token with timingSafeEqual, Idempotency-Key, 429 backpressure and visible sessions, which is the shape of an authenticated intake. Neither fork has webhook signature verification."
+   },
+   {
+    "rfc_item": "WF-029 hosted auth",
+    "fork_features": [
+     "exec-remote-transport",
+     "session-token-api-auth",
+     "manager-mcp-gateway"
+    ],
+    "how": "Client transport with an owner token, a per-run token, and a token stored only as a verifier. All partial. Keep them out until Q1 (local vs hosted) is answered."
+   },
+   {
+    "rfc_item": "WF-030 visual designer",
+    "fork_features": [
+     "nano-workforce-bpmn-mode"
+    ],
+    "how": "Its BPMN-from-DI rendering on the whiteboard is a reference for showing a declarative graph. Do not import the external engine."
+   },
+   {
+    "rfc_item": "Gap: reproducibility of stage runs (manager's own skills/plugins/MCP)",
+    "fork_features": [
+     "repo-managed-skills-specialisms",
+     "tubadog-project-mcp-dialog-guard",
+     "run-history-telemetry"
+    ],
+    "how": "Skills and playbooks shipped with the release and hashed into each attempt record, plus repo .mcp.json servers disabled by default, give a pinned execution environment."
+   },
+   {
+    "rfc_item": "Gap: per-CLI capability matrix / Codex-OpenCode cost absent",
+    "fork_features": [
+     "eddie-cost-telemetry",
+     "kk-model-catalog",
+     "ceo-any-cli",
+     "per-cli-session-limits"
+    ],
+    "how": "Cost parsed from each CLI's own session data, models reported by each CLI, read-only enforcement per CLI, and limits per CLI together give the matrix's columns."
+   },
+   {
+    "rfc_item": "Gap: --host and preview gateway not addressed by the loopback-only rule",
+    "fork_features": [
+     "ws-origin-check",
+     "loopback-request-boundary"
+    ],
+    "how": "ws-origin-check already covers SWARM_HOST LAN names. The preview gateway's same-origin agent pages are unhandled by every fork and need a new rule."
+   }
+  ],
+  "shortlist_problems": [
+   "Wave 1 imports the same feature three times: ceo-any-cli, telemove-ceo-on-opencode and kk-ceo-codex-opencode all un-pin the CEO from Claude and edit the same CEO paths in swarm.ts/clis.ts. Keep only ceo-any-cli. The other two are subsets, and both leave a non-Claude CEO with shell access (telemove keeps bash:'allow'; kk runs Codex with --dangerously-bypass-approvals-and-sandbox).",
+   "opencode2-compat in wave 1 contradicts ceo-any-cli (francovp targets OpenCode 1.x) and upstream #311 local models (OpenCode 1 schema plus --model). Nobody has decided whether OpenCode 1 stays supported. Gate it on detected version (Calel33's cached `opencode --version`) or move it out of wave 1. The OpenCode 2 claims were not verified against a real binary.",
+   "ws-origin-check and loopback-request-boundary overlap and are both in wave 1. Merge them into one middleware. loopback-request-boundary is not a quick win: as written its hard-coded loopback allowlist breaks --host, pocket mode over LAN/Tailscale and the preview gateway. Neither covers upstream #310's preview pages, which are served same-origin and so pass every Origin check.",
+   "Ordering: the request boundary must land before any new mutating route (manager-refinement-after-qa, decision room, manager-mcp-gateway, chat attachments, the file reveal text route). Several of those add merge/close/approve endpoints that a cross-site page can currently POST to.",
+   "Eight wave 1 items edit mergeGate.ts mergeStep and swarm.ts advanceMerge/mergePull: fail-closed-merge-gate, branch-update-requeues-qa, paul-merge-gate-findings, tubadog-merge-holds, tubadog-routine-only-automerge, tubadog-qa-skip-held-drafts, kk-draft-pr-ready, manager-refinement-after-qa. Treated as independent quick wins they produce a conflict storm and inconsistent gate semantics. Give them one owner and one sequence: gate core, SHA-requeue rule (add the missing hand-merge-requeue-on-head-move), holds, routine-only, held-draft skip, draft-ready, refinement.",
+   "fail-closed-merge-gate is M and changes behaviour, not a quick win. Unchanged, it never merges repos without CI, refuses UNSTABLE/HAS_HOOKS, and removes the manager's manual merge override. It needs an explicit checks:'none' policy (ADR-011) and an audited override (FR-035) before it ships.",
+   "kk-draft-pr-ready auto-undrafts QA-passed drafts and feeds them to auto-merge. Next to tubadog's swarm:hold drafts and needs-input drafts, that removes the human 'not ready' signal unless it checks holds first, and fail-closed-merge-gate refuses drafts in the same mergeStep. Make it per-floor opt-in and order it after holds.",
+   "tubadog-routine-only-automerge loads routineOnly ?? true. Existing auto-merge floors would start holding dependency, CI and large PRs after the import. Default it OFF (ADR-009, FR-005: no new gates without opt-in). Its glob heuristics ('auth', '*secret*') over-match.",
+   "eddie-floor-budgets is in wave 1, but cost telemetry (eddie-cost-telemetry) is in wave 2. Budgets count only reported Claude cost, so on Codex/OpenCode floors they never trigger. They are also lifetime-only with no reset. Either move it after telemetry or ship it with a visible 'cost unknown for this CLI' state (NFR-010).",
+   "The supermini dashboard in wave 1 lists the panels without their prerequisites. CEO panel and settings need supermini-world-decoupling (65 files, 2180 lines, code moved out of store.ts and sfx.ts, which churn at 52 and 25 commits per month upstream) and supermini-settings-sections-split (1350 lines out of ManagerConsole). It also needs the extra copyright line in LICENSE and a pickMode flip so 3D stays the default. This is a structural refactor, not a quick win.",
+   "supermini is a fast-forward from 157efde only while nothing else has landed. kanban-floor-flip, terminal-touch-scroll, eddie-compact-chat-thoughts and the client half of manager-refinement-after-qa touch KanbanView, the terminal and the console that supermini refactors. Either import 78a4d42 first and rebase the small UI fixes onto it, or defer the dashboard to the WF-020 phase. Don't interleave.",
+   "copilot-cli-agent is not low risk despite its 'cherry-pick' label. Its flags and hook payloads are unverifiable, the model ids look made up, it has no cost parser, and it adds a fourth CLI to every per-CLI table (limits, catalog, QA pairing, telemetry) before the RFC's per-CLI capability matrix exists. Defer it.",
+   "kk-trust-prompt-fixes has two more complete siblings (faustosip-trust-prompt-fix and folder-trust-under-older-screens, both upstream closed PR #286). The adopted-CLI and hook-review cases matter more once ceo-any-cli reuses the CEO terminal across CLIs. Plan the #286 follow-up instead of treating trust prompts as done.",
+   "Wave 2 ports ideas-prd-review-publication (XL, about 1000 lines of role-based swarm.ts glue) and tubadog-floor-lead (+500 lines in swarm.ts) into Swarm. The RFC's executive decision is a workflow layer built next to swarm.ts, not inside it. Lift their pure modules as seeds for WF-002 and WF-010..WF-012 instead of replaying the glue.",
+   "tubadog-floor-lead should not be imported as is. It adds an AgentRole 'lead' (against upstream #288's role removal and ADR-002's 'no role enum explosion'), runs one standing paid Claude session per floor by default, hard-codes model ids, and takes triage away from the CEO. Keep only the scoped-tool pattern for WF-006. eddie-takes-roles has the same problem.",
+   "Wave 2 carries three incompatible telemetry stores: multi-provider-ai-usage (unbounded array in state.json, findIndex on every insert, no demo fake), eddie-cost-telemetry, and run-history-telemetry. Pick one observation schema and one rotated store, shaped for WF-004/WF-013, before porting any of them.",
+   "per-cli-session-limits is in wave 2 without claude-only-usage-brakes, although the audit says to port them as one unit. It also overlaps session-slot-reservation and droidsembly's QuotaGate on the same slotsFull/pacing code. Decide the combined design once.",
+   "manager-mcp-gateway gives one bearer token full manager power, including merge and approval. That lets an external agent approve its own spec or PR, which contradicts FR-025 and ADR-008 (approvers cannot self-attest). Exclude approval and merge tools, or record a distinct non-human principal, and land it only after the request boundary.",
+   "qa-security-review-escalation depends on repo-managed-skills-specialisms (it executes the vendored Cloudflare security-audit skill and its .cjs validators), so the skills must come first. Its label-based waiver lets anyone with write access skip the security review, against FR-032 and ADR-005. Drop the waiver.",
+   "qa-findings-and-evidence lets QA push applied suggestions, which breaks the office rule that QA leaves GitHub alone. Its Codex-connector thread triage assumes a specific third-party bot. Strip both and keep the SHA-pinned outcomes and stable finding IDs.",
+   "eddie-qa-pairing depends on shared/cli.ts resolveCli from eddie-ceo-any-cli, which is not being imported. Re-derive runtimeCli on top of francovp's ceo-any-cli and upstream's current sessionRuntime (box hosts).",
+   "tubadog-decision-room in wave 2 without first generalizing upstream's existing HireRequestView/PocketApprovals (the RFC gap asks for exactly that) would give the office several approval inboxes: Pocket approvals, decision room, the ideas approval card, the supermini CEO panel and Kanban 'request changes'. Decide on one approval-request model before porting.",
+   "tubadog-decision-briefs adds DECISIONS_RULE and the brief template to every build/fix prompt, a cost paid on every session per CLAUDE.md, and decides merges with the regex recommendsMerge(). Make the brief a typed artifact with an enum recommendation. Never take tubadog-decision-clock's default action, which auto-merges held auth/migration PRs after 48 h.",
+   "read-only-analysis-task is woven into droidsembly's OpenCode V2 commit 8adf85b and overlaps Saredigital's analysis-tasks-reports. Porting it as a new swarm task type now makes throwaway work if WF-008 (ai.task executor) follows. Port it directly as that executor.",
+   "workspace-commit-preservation (wave 2) and save-desk-work-before-reuse (wave 1) both rewrite setUpWorktree. localloop's guardWorktree throws on dirty desks and stalls agents. Take only its preserveCommit recovery refs, with pruning, on top of save-desk.",
+   "global-scheduler-pause has two siblings that were not considered (close-office, box-daily-operations' cloud pause). Ship one persisted pause flag, re-implemented on upstream's scheduler with localloop's 353-line test as the spec, because WF-007 needs exactly one.",
+   "mcp-input-bounds bumps @modelcontextprotocol/sdk to ^1.32.2 and zod, while tubadog-deps-audit and dependency-advisory-patches bump the same packages to other versions. Regenerate the lockfile once, locally, and check that the Agent SDK still pairs with MCP SDK 1.32.",
+   "persistence-shutdown-hardening is about 1240 lines over 25 files and changes shutdown ordering. It is a sound cherry-pick but not a quick win. Retest office restart and terminal keeper adoption in demo mode before stacking more on it.",
+   "Neither wave builds any part of the RFC core (WF-001..WF-009). Almost everything imported improves the legacy swarm.ts pipeline that the RFC plans to wrap as one cubefarm.development stage (ADR-007, open). Settle ADR-007 before wave 2, or wave 2 grows the 5.5k-line hotspot the RFC is trying to avoid.",
+   "No fork-maintenance item is shortlisted (eddie-upstream-drift-check, kk-fork-safety-guide), although the fork has no upstream remote and every wave adds drift in swarm.ts, cliRunner.ts and ManagerConsole."
+  ]
+ }
+}
