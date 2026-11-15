@@ -103,7 +103,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
 
 ### Phase 2: 2D dashboard (M1a, PR 2)
 
-- [ ] Task 5: Merge the supermini dashboard with its history. (depends on 1) (#3)
+- [x] Task 5: Merge the supermini dashboard with its history. (depends on 1) (#3)
   `git remote add supermini https://github.com/supermini/AI-2DFarm.git`, `git fetch supermini`,
   `git merge --no-ff 78a4d42` (157efde..78a4d42 touches 111 files, all under `client/` plus `docs/pocket.md`; no
   server, shared, package or e2e changes), then `git cherry-pick -x 951c3af` (metrics CSS).
@@ -112,7 +112,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   Run typecheck, full `npm test`, `npm run build`. Add the ledger row in `docs/fork.md`.
   Logging: none added by the merge; note in the PR which commits came in.
 
-- [ ] Task 6: Keep the 3D office as the desktop default. (depends on 5) (#4)
+- [x] Task 6: Keep the 3D office as the desktop default. (depends on 5) (#4)
   `client/src/pocket/mode.ts`: restore the narrow/touch inputs to `pickMode` and `startMode` so a wide, non-touch
   screen opens the 3D office and narrow/touch screens open the dashboard; keep `?office=3d`, `?pocket=0` and the
   saved choice (a saved legacy `pocket` value maps to the dashboard). Update `client/src/pocket/mode.test.ts`
@@ -120,7 +120,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   Confirm `e2e/helpers.ts` (`goto('/')`) and `scripts/bench.mjs` (`/?stats`) still open the 3D office.
   Logging: `console.debug('[mode] picked', { mode, reason })` once at startup.
 
-- [ ] Task 7: Dashboard safety and bundle fixes. (depends on 5) (#5)
+- [x] Task 7: Dashboard safety and bundle fixes. (depends on 5) (#5)
   a) Grid terminals read-only: add a prop to `client/src/ui/LiveTerminal.tsx` (e.g. `interactive={false}`) used by
   the dashboard terminal grid tiles, so a tile never sends `{t:'resize'}` (the agent's single shared PTY in
   `server/terminal.ts` takes the last viewer's size) and never forwards keystrokes (Esc would interrupt the agent);
@@ -133,7 +133,7 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   Logging: `console.debug('[terminal] read-only tile', { agentId })`; `console.warn` when a blocked action is attempted
   during replay.
 
-- [ ] Task 8: Attribution and demo verification of the dashboard. (depends on 6, 7) (#6)
+- [x] Task 8: Attribution and demo verification of the dashboard. (depends on 6, 7) (#6)
   `LICENSE`: add `Copyright (c) 2026 Paulo Lopes` below Leon van Zyl's notice (supermini's MIT notice for the
   imported dashboard). README: one short section on the 2D dashboard and how to switch views.
   Boot the demo office (`npm run build`, then the SAFETY command on port 4391), and screenshot: desktop opens 3D,
