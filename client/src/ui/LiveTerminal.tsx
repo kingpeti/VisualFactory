@@ -158,15 +158,7 @@ export function LiveTerminal({ agentId, className, interactive = true }: { agent
       const t = Array.from(e.changedTouches).find((x) => x.identifier === touchId) ?? Array.from(e.touches).find((x) => x.identifier === touchId);
       if (!t) return;
       if (!dragging) {
-        const dx = t.clientX - startX;
-        const dy = t.clientY - startY;
-        if (!pastScrollThreshold(dx, dy)) return;
-        // A read-only tile keeps the agent's own size, often wider than a phone: a sideways swipe is the browser's
-        // pan (touch-action: pan-x), only an up or down one scrolls the terminal.
-        if (!interactive && Math.abs(dx) > Math.abs(dy)) {
-          touchId = null;
-          return;
-        }
+        if (!pastScrollThreshold(t.clientX - startX, t.clientY - startY)) return;
         dragging = true;
       }
       e.preventDefault();
@@ -199,10 +191,14 @@ export function LiveTerminal({ agentId, className, interactive = true }: { agent
       dragging = false;
       carryPx = 0;
     };
-    el.addEventListener('touchstart', onTouchStart, { passive: true });
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    el.addEventListener('touchend', onTouchEnd, { passive: true });
-    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    // A read-only tile keeps the agent's own size, which can be bigger than the tile both ways: the browser's own pan
+    // reaches all of it (styles.css), and its scrollback is in the drawer, whose terminal takes the swipes.
+    if (interactive) {
+      el.addEventListener('touchstart', onTouchStart, { passive: true });
+      el.addEventListener('touchmove', onTouchMove, { passive: false });
+      el.addEventListener('touchend', onTouchEnd, { passive: true });
+      el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    }
 
     return () => {
       closed = true;

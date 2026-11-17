@@ -146,23 +146,17 @@ test.describe('touch on a real phone', () => {
         await expect.poll(async () => (await shownTokens(page)).lowest).toBeGreaterThan(scrolled);
       });
 
-      test('a read-only grid tile scrolls on a swipe, and sends neither keys nor a resize', async ({ page }) => {
-        test.setTimeout(60_000);
+      test('a read-only grid tile leaves a swipe to the browser, and sends neither keys nor a resize', async ({ page }) => {
         await recordTermSends(page);
-        const tile = await openAgentTerminal(page);
-        await typeOverflow(page, tile);
-        await page.locator(DRAWER).getByRole('button', { name: 'Close (Esc)' }).click();
-        await expect(page.locator(DRAWER)).toHaveCount(0);
-        await termSends(page); // the drawer's keys and size, not the tile's
-
+        const tile = await openTile(page);
+        // The tile keeps the agent's own size: the browser's pan, both ways, reaches all of it.
+        expect(await page.locator(`${tile} .live-term-screen`).evaluate((el) => getComputedStyle(el).touchAction)).toBe('auto');
         const cdp = await page.context().newCDPSession(page);
         const box = await visibleBox(page, `${tile} .live-term-screen`);
         const x = box.x + box.width / 2;
         await touchStart(cdp, [{ x, y: box.y + box.height / 2, id: 20 }]); // a tap
         await touchEnd(cdp);
-        const before = (await shownTokens(page, tile)).lowest;
-        await dragY(cdp, 21, x, box.y + box.height * 0.3, box.y + box.height * 0.8);
-        await expect.poll(async () => (await shownTokens(page, tile)).lowest).toBeLessThan(before);
+        await dragY(cdp, 21, x, box.y + box.height * 0.8, box.y + box.height * 0.3);
         await page.keyboard.type('x');
         expect(await termSends(page)).toEqual([]);
       });
