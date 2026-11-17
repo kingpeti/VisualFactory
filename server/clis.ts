@@ -371,6 +371,14 @@ export function hookReviewKey(screen: string): 'enter' | 'down' | null {
 }
 
 /**
+ * The key for a CLI's start-up menu: the hooks review first, then the folder-trust question. Never the other way
+ * round: a trust question still on screen above the review would let trustKey take its "Trust all" option for a yes.
+ */
+export function startupKey(screen: string): 'enter' | 'down' | null {
+  return hookReviewKey(screen) ?? trustKey(screen);
+}
+
+/**
  * Lines on screen where a CLI says it interrupted a turn (Claude Code: "Interrupted · What should Claude do
  * instead?", Codex: "Conversation interrupted"). Esc fires no hook in Claude Code, so a new one is how the office
  * knows the manager stopped the turn from the terminal.

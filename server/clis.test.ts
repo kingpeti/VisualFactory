@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { boxVersions, CODEX_HOOK_EVENTS, codexHookCommand, CROSS_TURN_TOOLS, hookReviewKey, interruptions, launchArgs, localUrl, oneAtATime, signedOutScreen, trustKey, unwrapCmdShim, type LaunchContext } from './clis.ts';
+import { boxVersions, CODEX_HOOK_EVENTS, codexHookCommand, CROSS_TURN_TOOLS, hookReviewKey, interruptions, launchArgs, localUrl, oneAtATime, signedOutScreen, startupKey, trustKey, unwrapCmdShim, type LaunchContext } from './clis.ts';
 import { LOCAL_PROVIDERS } from '../shared/models.ts';
 import { describeOfficeTool, describeTool, newScreenshots, screenshotFile, summariseResult } from './agentRunner.ts';
 
@@ -86,6 +86,27 @@ describe('hookReviewKey', () => {
     expect(hookReviewKey(review(1))).toBe('down');
     expect(hookReviewKey(review(3))).toBe('enter');
     expect(hookReviewKey('› Ask Codex to do anything')).toBeNull();
+  });
+});
+
+describe('startupKey', () => {
+  it('answers the hooks review before a trust question still on screen above it, never trusting all hooks', () => {
+    const screen = [
+      'Do you trust the contents of this directory?',
+      '› 1. Yes, continue',
+      '  2. No, quit',
+      '  Hooks need review',
+      '  1. Review hooks',
+      '› 2. Trust all and continue',
+      "  3. Continue without trusting (hooks won't run)",
+    ].join('\n');
+    expect(trustKey(screen)).toBe('enter'); // the live menu's "Trust all" reads as a yes to trustKey alone
+    expect(startupKey(screen)).toBe('down');
+  });
+
+  it('answers a trust question when there is no hooks review', () => {
+    expect(startupKey(['Quick safety check: Is this a project you created or one you trust?', '❯ No, exit', '  Yes, I trust this folder'].join('\n'))).toBe('down');
+    expect(startupKey('❯ Try "refactor <filepath>"')).toBeNull();
   });
 });
 
