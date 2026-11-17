@@ -28,6 +28,7 @@ import {
   type SessionResult,
 } from './agentRunner.ts';
 import type { OfficeTools } from './ceo.ts';
+import { debugLog } from './log.ts';
 import type { AgentTerminal } from './terminal.ts';
 import type { AgentCli } from '../shared/types.ts';
 
@@ -911,6 +912,7 @@ export function startCliSession(opts: SessionOptions, callbacks: SessionCallback
       const screen = term.screen();
       const review = hookReviewKey(screen);
       const key = trustKeys < 12 && Date.now() - trustedAt > 3000 ? (trustKey(screen) ?? review) : null;
+      if (key) debugLog('trust', 'answered trust prompt', { cli, key });
       if (key === 'down') {
         trustKeys += 1;
         quietly(() => pty.write(term.appCursor ? '\x1bOB' : '\x1b[B'));
