@@ -139,6 +139,7 @@ export function LiveTerminal({ agentId, className, interactive = true }: { agent
     let lastY = 0;
     let dragging = false;
     let carryPx = 0;
+    let scrolledLines = 0; // this gesture's, logged once when it ends
     const lineHeightPx = () => {
       const screen = el.querySelector('.xterm-screen') as HTMLElement | null;
       return screen && term.rows > 0 ? screen.clientHeight / term.rows : 0;
@@ -157,7 +158,15 @@ export function LiveTerminal({ agentId, className, interactive = true }: { agent
       const t = Array.from(e.changedTouches).find((x) => x.identifier === touchId) ?? Array.from(e.touches).find((x) => x.identifier === touchId);
       if (!t) return;
       if (!dragging) {
-        if (!pastScrollThreshold(t.clientX - startX, t.clientY - startY)) return;
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        if (!pastScrollThreshold(dx, dy)) return;
+        // A read-only tile keeps the agent's own size, often wider than a phone: a sideways swipe is the browser's
+        // pan (touch-action: pan-x), only an up or down one scrolls the terminal.
+        if (!interactive && Math.abs(dx) > Math.abs(dy)) {
+          touchId = null;
+          return;
+        }
         dragging = true;
       }
       e.preventDefault();
@@ -181,8 +190,11 @@ export function LiveTerminal({ agentId, className, interactive = true }: { agent
       const step = touchScrollLines(deltaY, carryPx, lineHeightPx());
       carryPx = step.carryPx;
       if (step.lines !== 0) term.scrollLines(-step.lines);
+      scrolledLines += step.lines;
     };
     const onTouchEnd = () => {
+      if (dragging) console.debug('[termTouch] scroll', { lines: scrolledLines, buffer: term.buffer.active.type });
+      scrolledLines = 0;
       touchId = null;
       dragging = false;
       carryPx = 0;
