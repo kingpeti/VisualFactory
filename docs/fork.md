@@ -28,6 +28,10 @@ One row per feature taken from another fork. Cherry-picks keep the source commit
 | Feature | Source | Commits | Here | Adaptations | Tests |
 |---------|--------|---------|------|-------------|-------|
 | 2D dashboard | [supermini/AI-2DFarm](https://github.com/supermini/AI-2DFarm) | merge of 78a4d42 (51 commits), cherry-pick 951c3af | #63 | the 3D office stays the desktop default (`pocket/mode.ts`); read-only grid terminals (`ui/termSend.ts`); copyright line in LICENSE | the fork's own, `mode.test.ts`, `termSend.test.ts`, `noWorldImports.test.ts` |
+| Answer the live trust menu | [konstantinknappe-hash/cubefarm](https://github.com/konstantinknappe-hash/cubefarm) | cherry-picks 79caf97, 68a8ac6 | #64 | `debugLog('trust')` when a key is pressed | the fork's `clis.test.ts` cases |
+| Save a desk's work before reuse | [mysteryreloaded/software-development-factory](https://github.com/mysteryreloaded/software-development-factory) | cherry-pick 4d56b71 | #64 | preview desks (`swarm-preview*`) are not saved; uncommitted files over 25 MB left out and named; `leftovers` pruned to 30 days and 500 MB; the squash-merge tests skip on git < 2.38 | the fork's `workspace.test.ts`, plus preview, big file, pruning (`leftoversToPrune`) |
+| Touch-scroll a live terminal | [mysteryreloaded/software-development-factory](https://github.com/mysteryreloaded/software-development-factory) | cherry-pick 2d5b0ea, the `LiveTerminal.tsx` hunk of 37d6148 | #64 | read-only tiles pan sideways (`touch-action: pan-x`); the e2e spec runs on the dashboard and reads scrolling from the typed tokens on screen | `termTouch.test.ts`, `e2e/terminalTouch.spec.ts` (plus a read-only tile test) |
+| 60,000-character messages | [mysteryreloaded/software-development-factory](https://github.com/mysteryreloaded/software-development-factory) | cherry-pick -n 4286dec | #64 | the console's CEO input is in `consoleSections.tsx`; no `useTouch`; zod on both message routes | `shared/message.test.ts`, `server/managerMessages.test.ts`, `e2e/longMessage.spec.ts` |
 
 ## Syncing with upstream
 
