@@ -89,7 +89,10 @@ function UsageCard({ hot }: { hot: boolean }) {
   );
 }
 
-function AlarmCard({ alarm, repo, hot }: { alarm: OpsAlarm; repo: RepoView | undefined; hot: boolean }) {
+/** Where an alarm's "Open the Kanban" and "Visit floor" go; unset, the 3D office's Kanban overlay and elevator. */
+type AlarmLinks = { openKanban?: (alarm: OpsAlarm) => void; visitFloor?: (floor: number) => void };
+
+function AlarmCard({ alarm, repo, hot, openKanban, visitFloor }: { alarm: OpsAlarm; repo: RepoView | undefined; hot: boolean } & AlarmLinks) {
   const openOverlay = useStore((s) => s.openOverlay);
   const goToFloor = useStore((s) => s.goToFloor);
   const pr = alarm.prNumber !== null ? repo?.pulls.find((p) => p.number === alarm.prNumber) : undefined;
@@ -108,7 +111,7 @@ function AlarmCard({ alarm, repo, hot }: { alarm: OpsAlarm; repo: RepoView | und
       <div className="row wrap">
         {alarm.kind === 'pr' && alarm.prNumber !== null ? (
           <>
-            <button className="btn btn-small" onClick={() => openOverlay({ kind: 'kanban', repoId: alarm.repoId })}>
+            <button className="btn btn-small" onClick={() => (openKanban ? openKanban(alarm) : openOverlay({ kind: 'kanban', repoId: alarm.repoId }))}>
               📋 Open the Kanban
             </button>
             <button className="btn btn-small btn-good" onClick={() => void attempt(() => api.sendToQa(alarm.repoId, alarm.prNumber!))}>
@@ -136,7 +139,7 @@ function AlarmCard({ alarm, repo, hot }: { alarm: OpsAlarm; repo: RepoView | und
           )
         )}
         <span className="spacer" />
-        <button className="btn btn-small btn-ghost" onClick={() => goToFloor(alarm.floor)}>
+        <button className="btn btn-small btn-ghost" onClick={() => (visitFloor ?? goToFloor)(alarm.floor)}>
           Visit floor {alarm.floor}
         </button>
       </div>
@@ -294,7 +297,7 @@ function OpsTable() {
   );
 }
 
-export function OpsTab({ card }: { card?: string }) {
+export function OpsTab({ card, openKanban, visitFloor }: { card?: string } & AlarmLinks) {
   const alarms = useStore((s) => s.ops.alarms);
   const repos = useStore((s) => s.repos);
   useEffect(() => {
@@ -306,8 +309,15 @@ export function OpsTab({ card }: { card?: string }) {
         <UsageCard hot={card === 'usage'} />
         <h3 className="section">🚨 Needs you {alarms.length > 0 && <span className="badge">{alarms.length}</span>}</h3>
         {alarms.length === 0 && <p className="muted small">All clear. The beacon on the lobby's mission control wall spins when a PR needs you or an agent has been stuck on an error for 10 minutes.</p>}
-        {alarms.map((a) => (
-          <AlarmCard key={a.id} alarm={a} repo={repos.find((r) => r.id === a.repoId)} hot={a.id === card} />
+        {alarms.map((alarm) => (
+          <AlarmCard
+            key={alarm.id}
+            alarm={alarm}
+            repo={repos.find((repo) => repo.id === alarm.repoId)}
+            hot={alarm.id === card}
+            openKanban={openKanban}
+            visitFloor={visitFloor}
+          />
         ))}
         <DoctorSection hot={card === 'doctor'} />
       </div>

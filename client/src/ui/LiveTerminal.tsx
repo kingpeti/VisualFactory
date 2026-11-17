@@ -4,9 +4,12 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import type { TermClientMessage, TermServerMessage } from '../../../shared/types';
+import { termMessage } from './termSend';
 
 // An agent's real terminal: their CLI's screen streamed from the office (/ws/term), and what you type sent back to it.
 // Opening it late shows everything so far: the office keeps a copy of each agent's screen and scrollback.
+// A read-only one (interactive={false}, the dashboard's grid tiles) only watches: it keeps the agent's own screen size
+// and sends nothing (termSend.ts).
 
 const THEME: ITheme = {
   background: '#1b1b29',
@@ -32,7 +35,7 @@ const THEME: ITheme = {
   brightWhite: '#ffffff',
 };
 
-export function LiveTerminal({ agentId, className }: { agentId: string; className?: string }) {
+export function LiveTerminal({ agentId, className, interactive = true }: { agentId: string; className?: string; interactive?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState(false);
   const [connected, setConnected] = useState(true);
@@ -40,10 +43,12 @@ export function LiveTerminal({ agentId, className }: { agentId: string; classNam
 
   useEffect(() => {
     const el = host.current!;
+    if (!interactive) console.debug('[terminal] read-only tile', { agentId });
     const term = new Terminal({
       fontFamily: "'JetBrains Mono', Consolas, monospace",
       fontSize: 13,
-      cursorBlink: true,
+      cursorBlink: interactive,
+      disableStdin: !interactive,
       cursorInactiveStyle: 'none',
       scrollback: 5000,
       allowProposedApi: true,
@@ -62,10 +67,12 @@ export function LiveTerminal({ agentId, className }: { agentId: string; classNam
     let ready = false; // the snapshot is on screen: sizes we send now describe what the viewer sees
     let retry: number | undefined;
     let frame = 0;
-    const send = (m: TermClientMessage) => {
-      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
+    const send = (message: TermClientMessage) => {
+      const allowed = termMessage(message, interactive);
+      if (allowed && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(allowed));
     };
     const fitAndTell = () => {
+      if (!interactive) return; // keeps the agent's own size: fitting without telling them would garble their screen
       try {
         fit.fit();
       } catch {
@@ -106,8 +113,9 @@ export function LiveTerminal({ agentId, className }: { agentId: string; classNam
 
     const input = term.onData((data) => send({ t: 'input', data }));
     // Esc belongs to the CLI (it interrupts Claude Code) while you're typing in the terminal, not to the panel.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') e.stopPropagation();
+    // A read-only terminal leaves Esc to the page: it reaches no one.
+    const onKey = (event: KeyboardEvent) => {
+      if (interactive && event.key === 'Escape') event.stopPropagation();
     };
     el.addEventListener('keydown', onKey);
     const onFocus = () => setFocused(true);
@@ -131,14 +139,14 @@ export function LiveTerminal({ agentId, className }: { agentId: string; classNam
       ws?.close();
       term.dispose();
     };
-  }, [agentId]);
+  }, [agentId, interactive]);
 
   return (
-    <div className={`live-term ${className ?? ''}`}>
+    <div className={`live-term ${interactive ? '' : 'live-term-readonly'} ${className ?? ''}`}>
       <div className="live-term-screen" ref={host} />
       <div className="live-term-foot">
         <span className={`live-dot ${live ? 'live-dot-on' : ''}`} />
-        {!connected ? 'Reconnecting…' : live ? (focused ? 'Typing goes straight to the agent · Esc goes to them too; click outside to use the office keys' : 'Live · click the terminal to type into it') : 'Not running · a message below picks the session back up'}
+        {!connected ? 'Reconnecting…' : !interactive ? (live ? 'Live · read-only here; open them to type' : 'Not running') : live ? (focused ?'Typing goes straight to the agent · Esc goes to them too; click outside to use the office keys' : 'Live · click the terminal to type into it') : 'Not running · a message below picks the session back up'}
       </div>
     </div>
   );

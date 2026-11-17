@@ -1,0 +1,143 @@
+// The reviewer's queue (pure): every PR on the screen's floors grouped by where it stands in build → QA → merge.
+// Testing (QA hasn't given a verdict yet), Failed / fixing (back with an agent, or the CEO is triaging it), Needs you,
+// Passed (waiting on the merge gate) and Merged today. The "needs you" test is the one the role badges and the Kanban
+// board use (qaCard.ts needsManager), so the counts agree.
+import type { PullInfo, QaView, RepoView } from '../../../shared/types';
+import { officeNow } from '../officeTime';
+import { needsManager } from '../qaCard';
+import { qaKey, type Agent } from '../store';
+
+export type ReviewGroup = 'testing' | 'failed' | 'needs-you' | 'passed' | 'merged';
+
+export const REVIEW_GROUPS: { group: ReviewGroup; title: string }[] = [
+  { group: 'testing', title: 'Testing' },
+  { group: 'failed', title: 'Failed / fixing' },
+  { group: 'needs-you', title: 'Needs you' },
+  { group: 'passed', title: 'Passed' },
+  { group: 'merged', title: 'Merged today' },
+];
+
+export interface ReviewItem {
+  repo: RepoView;
+  pr: PullInfo;
+  qa: QaView | undefined;
+  group: ReviewGroup;
+}
+
+export interface ReviewSection {
+  group: ReviewGroup;
+  title: string;
+  items: ReviewItem[];
+}
+
+/** The group an open PR is in, from its QA record (none: QA hasn't seen it yet). */
+export function openGroup(qa: Pick<QaView, 'status' | 'ceoLooking'> | undefined): ReviewGroup {
+  if (needsManager(qa)) return 'needs-you';
+  switch (qa?.status) {
+    case 'failed':
+    case 'fixing':
+    case 'needs-human': // the CEO is triaging it first
+      return 'failed';
+    case 'passed':
+      return 'passed';
+    default:
+      return 'testing';
+  }
+}
+
+/**
+ * The queue of `repos` (the floors on screen), always the five groups in order. Open PRs sit by floor then number;
+ * merged ones are today's (since local midnight before `now`), the newest first. `now` defaults to the office's time, so
+ * during the time-lapse "today" is the day being replayed.
+ */
+export function reviewQueue(repos: RepoView[], qa: Record<string, QaView>, now: number = officeNow()): ReviewSection[] {
+  const dayStart = new Date(now).setHours(0, 0, 0, 0);
+  const sections: ReviewSection[] = REVIEW_GROUPS.map((g) => ({ ...g, items: [] }));
+  const into = (group: ReviewGroup) => sections.find((s) => s.group === group)!.items;
+  const merged: { item: ReviewItem; at: number }[] = [];
+  for (const repo of [...repos].sort((a, b) => a.floor - b.floor)) {
+    for (const pr of [...repo.pulls].sort((a, b) => a.number - b.number)) {
+      const rec = qa[qaKey(repo.id, pr.number)];
+      if (pr.state === 'OPEN') {
+        const group = openGroup(rec);
+        into(group).push({ repo, pr, qa: rec, group });
+      } else if (pr.state === 'MERGED') {
+        const at = pr.mergedAt ? Date.parse(pr.mergedAt) : NaN;
+        if (Number.isFinite(at) && at >= dayStart && at <= now) merged.push({ item: { repo, pr, qa: rec, group: 'merged' }, at });
+      }
+    }
+  }
+  into('merged').push(...merged.sort((a, b) => b.at - a.at).map((m) => m.item));
+  return sections;
+}
+
+/** How many PRs each group holds. */
+export const reviewCounts = (sections: ReviewSection[]): Record<ReviewGroup, number> =>
+  Object.fromEntries(sections.map((s) => [s.group, s.items.length])) as Record<ReviewGroup, number>;
+
+/** The PR the route names, if it is in the queue. */
+export function findReviewItem(sections: ReviewSection[], pr: number | null): ReviewItem | null {
+  if (pr === null) return null;
+  for (const s of sections) {
+    const hit = s.items.find((i) => i.pr.number === pr);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * Who wrote a PR and who tested it. The QA record names them; for a PR opened before QA saw it, the worker (not a
+ * tester: while testing, an agent's prNumber is the PR under test) on the PR's own floor (`repoId`: PR numbers and
+ * branch names repeat across repositories) whose PR number or branch it is.
+ */
+export function reviewAgents(qa: Pick<QaView, 'devAgentId' | 'qaAgentId'> | undefined, pr: Pick<PullInfo, 'number' | 'headRefName'>, agents: Agent[], repoId: string): { dev: Agent | null; qa: Agent | null } {
+  const byId = (id: string | null | undefined) => (id ? (agents.find((agent) => agent.id === id) ?? null) : null);
+  const authors = agents.filter((agent) => agent.repoId === repoId && agent.role !== 'ceo' && agent.task !== 'qa');
+  const dev = byId(qa?.devAgentId) ?? authors.find((agent) => agent.prNumber === pr.number) ?? authors.find((agent) => agent.branch && agent.branch === pr.headRefName) ?? null;
+  return { dev, qa: byId(qa?.qaAgentId) };
+}
+
+// ---------- the Actions tab ----------
+
+export interface ReviewActions {
+  /** The QA button: "Send to QA" for a PR QA hasn't seen, "Retry QA" for another round (the office refuses one while it is testing or fixing). */
+  retryQa: 'Send to QA' | 'Retry QA' | null;
+  /** Hand it to a developer with QA's findings (only a failed or needs-human PR can go back). */
+  sendBack: boolean;
+  /** Merge once QA passed; Merge anyway where QA wants the manager's word. `disabled` is why it can't be pressed. */
+  merge: { label: 'Merge' | 'Merge anyway'; disabled: string | null } | null;
+  close: boolean;
+  /** Why there is little or nothing to do, when that is so. */
+  hint: string | null;
+}
+
+/** What the manager can do to a PR, from where it stands. The same offers as the Kanban board's cards, plus a retest of a passed PR. A merged PR has none. */
+export function reviewActions(item: Pick<ReviewItem, 'pr' | 'qa'>): ReviewActions {
+  const { pr, qa } = item;
+  if (pr.state !== 'OPEN') return { retryQa: null, sendBack: false, merge: null, close: false, hint: pr.state === 'MERGED' ? 'This PR has merged: there is nothing left to do here.' : 'This PR is closed.' };
+  const st = qa?.status;
+  if (st === 'testing' || st === 'fixing' || st === 'queued') {
+    const why = st === 'testing' ? 'QA is testing it now' : st === 'fixing' ? 'A developer is fixing it' : 'It is waiting for QA';
+    return { retryQa: null, sendBack: false, merge: null, close: true, hint: `${why}: more actions open up when it is done.` };
+  }
+  const merge: ReviewActions['merge'] = st === 'passed' ? { label: 'Merge', disabled: pr.isDraft ? 'It is still a draft on GitHub.' : null } : st === 'needs-human' ? { label: 'Merge anyway', disabled: null } : null;
+  return {
+    retryQa: st ? 'Retry QA' : 'Send to QA',
+    sendBack: st === 'failed' || st === 'needs-human',
+    merge,
+    close: true,
+    hint: merge ? null : st ? 'It can merge once QA passes it.' : "QA hasn't tested it yet.",
+  };
+}
+
+/** The floor's auto-merge, as it bears on this PR (null once it has merged or closed). */
+export function autoMergeNote(autoMerge: boolean, item: Pick<ReviewItem, 'pr' | 'qa'>): string | null {
+  const { pr, qa } = item;
+  if (pr.state !== 'OPEN') return null;
+  if (!autoMerge) return 'Auto-merge is off on this floor: a PR that passes QA waits for you to merge it.';
+  if (qa?.status !== 'passed') return "Auto-merge is on: this PR merges by itself once QA passes its latest commit and GitHub's checks are green.";
+  if (pr.mergeable === 'CONFLICTING') return 'Auto-merge is on, but this PR has conflicts with the base branch, so it is held.';
+  if (pr.checks === 'failing') return 'Auto-merge is on, but CI is failing, so it is held.';
+  if (pr.checks === 'pending') return 'Auto-merge is on: QA passed, waiting for the checks to finish.';
+  return 'Auto-merge is on: QA passed, so it merges on its own shortly.';
+}

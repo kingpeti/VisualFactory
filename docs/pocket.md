@@ -5,9 +5,13 @@ office tells you when something needs you, on your devices or in the ntfy app.
 
 ## Pocket mode
 
-On a narrow or touch screen the office opens in pocket mode by itself. On a computer, pick **📱 Pocket mode** on the
-start screen. Each device remembers what you last chose; `?pocket=1` or `?pocket=0` in the address decides for one
-visit. Five tabs, at the bottom:
+On a narrow or touch screen the office opens as the 2D dashboard; on a computer it opens the 3D office, and
+**📱 Pocket mode** on its start screen switches to the dashboard. The dashboard is a rail of roles (🧠 CEO,
+🔨 Developer, 🔍 Reviewer, 🛰️ Metrics, ⚙️ Settings) on a computer, and pocket mode's tab bar at the bottom on a phone.
+Each screen has its own address (`#/ceo`, `#/dev/2`, `#/review/1/42`, `#/metrics`, `#/settings/notifications`), so
+links and reloads land on it. **🏢 Open the 3D office** goes back. Each device remembers what you last chose;
+`?office=3d` or `?office=2d` (or the older `?pocket=0` / `?pocket=1`) in the address decides for one visit.
+Pocket mode's five tabs, now under the roles:
 
 | Tab | What's there |
 | --- | --- |
