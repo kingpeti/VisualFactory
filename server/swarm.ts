@@ -3696,7 +3696,9 @@ export class Swarm {
     const a = this.agent(id);
     if (a.role === 'ceo') return this.messageCeo(text);
     const repo = this.repo(a.repoId);
-    checkMessage(id, text);
+    // Typed at the CLI's prompt, it's already there whatever its length: only an empty one is nothing to log.
+    if (!typed) checkMessage(id, text);
+    else if (!text.trim()) throw new HttpError(400, 'Empty message');
     text = text.trim();
     const rt = this.agentRt.get(id)!;
     if (rt.session) {
