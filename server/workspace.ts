@@ -594,20 +594,29 @@ async function saveLeftovers(fullName: string, desk: string, label = path.basena
     note?.(`Left ${names.length} file${names.length === 1 ? '' : 's'} over ${LEFTOVER_FILE_MAX_BYTES / 1024 / 1024} MB out of the saved work: ${names.slice(0, 3).join(', ')}${more}.`);
   }
   const edits = edited.filter((file) => !big.has(file));
-  const added = untracked.filter((file) => !big.has(file));
+  // A folder here is a repository of its own inside the desk: `add -N` can't take it, and its work is in it.
+  const added = untracked.filter((file) => !big.has(file) && !file.endsWith('/'));
   let commits = Number(await g(['rev-list', '--count', 'HEAD', '--not', '--remotes']));
-  if (commits && baseRef) {
-    const merged = (await g(['merge-tree', '--write-tree', baseRef, 'HEAD']).catch(() => '')).trim();
-    if (merged && merged === (await g(['rev-parse', `${baseRef}^{tree}`]).catch(() => '')).trim()) commits = 0;
-  }
+  if (commits && baseRef && (await alreadyMerged(g, baseRef))) commits = 0;
   if (!edits.length && !added.length && !commits) return null;
   const dir = path.join(HOME_DIR, 'leftovers', fullName.replace('/', '__'));
   await fs.mkdir(dir, { recursive: true });
   const tmp = await fs.mkdtemp(path.join(dir, '.tmp-'));
   try {
     // New files are intent-to-added (index entry, no content) so `git diff HEAD` lists them as new files. Chunked,
-    // like the branch sweeps: a few hundred new files would exceed Windows' 32,767-character command line.
-    for (let i = 0; i < added.length; i += 100) await g(['add', '-N', '--', ...added.slice(i, i + 100)]);
+    // like the branch sweeps: a few hundred new files would exceed Windows' 32,767-character command line. A chunk
+    // git refuses is retried a file at a time, and only the files it still refuses stay out: the commits and edits
+    // are saved whatever happens here.
+    const refused: string[] = [];
+    for (let i = 0; i < added.length; i += 100) {
+      const chunk = added.slice(i, i + 100);
+      if (await g(['add', '-N', '--', ...chunk]).then(() => true, () => false)) continue;
+      for (const file of chunk) await g(['add', '-N', '--', file]).catch(() => refused.push(file));
+    }
+    if (refused.length) {
+      console.warn('[workspace] left new files git would not add out of the saved work', { desk, files: refused });
+      note?.(`Left ${refused.length} new file${refused.length === 1 ? '' : 's'} git would not add out of the saved work: ${refused.slice(0, 3).join(', ')}${refused.length > 3 ? ` and ${refused.length - 3} more` : ''}.`);
+    }
     // Written to files, not read from stdout: exec trims it, and a patch's trailing whitespace matters.
     if (commits) await g(['format-patch', '-q', '-o', tmp, 'HEAD', '--not', '--remotes']);
     const skip = edited.filter((file) => big.has(file)).map((file) => `:(exclude,literal)${file}`);
@@ -626,6 +635,22 @@ async function saveLeftovers(fullName: string, desk: string, label = path.basena
   }
 }
 
+/**
+ * Whether merging HEAD into `baseRef` would change nothing: its commits are in already (a squash merge, its branch
+ * deleted from the remote). git 2.38+ asks merge-tree; an older git (or a conflict) compares the files the branch
+ * changed since it left `baseRef`, which must all read the same there.
+ */
+async function alreadyMerged(g: (args: string[]) => Promise<string>, baseRef: string): Promise<boolean> {
+  const tree = (await g(['merge-tree', '--write-tree', baseRef, 'HEAD']).catch(() => '')).trim();
+  if (tree) return tree === (await g(['rev-parse', `${baseRef}^{tree}`]).catch(() => '')).trim();
+  const forkPoint = (await g(['merge-base', baseRef, 'HEAD']).catch(() => '')).trim();
+  if (!forkPoint) return false;
+  const names = (output: string) => output.split('\0').filter(Boolean);
+  const changed = names(await g(['diff', '--name-only', '--no-renames', '-z', forkPoint, 'HEAD']));
+  const differ = new Set(names(await g(['diff', '--name-only', '--no-renames', '-z', baseRef, 'HEAD'])));
+  return changed.length > 0 && !changed.some((file) => differ.has(file));
+}
+
 /** The files among `files` (relative to `dir`) over LEFTOVER_FILE_MAX_BYTES; a deleted file is none of them. */
 async function oversized(dir: string, files: readonly string[]): Promise<string[]> {
   const sizes = await Promise.all(files.map(async (file) => (await fs.stat(path.join(dir, file)).catch(() => null))?.size ?? 0));
@@ -641,11 +666,13 @@ export interface LeftoverPatch {
 
 /**
  * The saved patches to delete: those older than `maxAgeMs`, and, oldest first, those that would take the rest past
- * `maxBytes` in all. `keep` (the patch just saved) always stays and counts towards `maxBytes`.
+ * `maxBytes` in all. `keep` (the patch just saved) always stays and counts towards `maxBytes`, unless it alone is over
+ * it: one huge save must not push out every other desk's work.
  */
 export function leftoversToPrune(patches: readonly LeftoverPatch[], now: number, keep: string, maxAgeMs = LEFTOVERS_MAX_AGE_MS, maxBytes = LEFTOVERS_MAX_BYTES): string[] {
   const prune: string[] = [];
-  let total = patches.find((patch) => patch.file === keep)?.bytes ?? 0;
+  const kept = patches.find((patch) => patch.file === keep)?.bytes ?? 0;
+  let total = kept > maxBytes ? 0 : kept;
   let full = false;
   for (const patch of [...patches].sort((a, b) => b.mtimeMs - a.mtimeMs)) {
     if (patch.file === keep) continue;

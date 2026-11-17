@@ -39,9 +39,6 @@ const { branchHolder, deskDir, fileList, leftoversInDesk, leftoversToPrune, list
   await import('./workspace.ts');
 // Most tests only care about the status line.
 const syncMain = async (...args: Parameters<typeof sync>) => (await sync(...args))?.status ?? null;
-// `merge-tree --write-tree` (git 2.38+) tells a squash-merged desk apart; an older git keeps its commits in the patch.
-const [gitMajor = 0, gitMinor = 0] = (await git(['--version'])).match(/(\d+)\.(\d+)/)?.slice(1).map(Number) ?? [];
-const mergeTreeWrites = gitMajor > 2 || (gitMajor === 2 && gitMinor >= 38);
 
 let seq = 0;
 let edits = 0;
@@ -580,7 +577,7 @@ describe('prepareDesk', { timeout: 60_000 }, () => {
     expect((await fs.readdir(path.join(r.upstream, 'batch')))).toHaveLength(250);
   });
 
-  it.skipIf(!mergeTreeWrites)("doesn't save a desk whose work is already in the default branch, after a squash merge", async () => {
+  it("doesn't save a desk whose work is already in the default branch, after a squash merge", async () => {
     const r = await makeRepos();
     const desk = await prepareDesk(r.fullName, { defaultBranch: 'main' }, 'ada-9f4c', 'swarm/issue-91-ada');
     await commitFile(desk, 'feature.txt', 'the merged feature\n');
@@ -596,7 +593,7 @@ describe('prepareDesk', { timeout: 60_000 }, () => {
     expect(await fs.readdir(path.join(HOME_DIR, 'leftovers', r.fullName.replace('/', '__')), { withFileTypes: true }).catch(() => [])).toEqual([]);
   });
 
-  it.skipIf(!mergeTreeWrites)('still saves a new file on a desk whose work is already merged, but not the merged commit', async () => {
+  it('still saves a new file on a desk whose work is already merged, but not the merged commit', async () => {
     const r = await makeRepos();
     const desk = await prepareDesk(r.fullName, { defaultBranch: 'main' }, 'babs-3e17', 'swarm/issue-44-babs');
     await commitFile(desk, 'feature.txt', 'the merged feature\n');
@@ -675,8 +672,8 @@ describe('leftoversToPrune', () => {
     expect(leftoversToPrune(patches, now, 'new', 30 * day, 100)).toEqual(['c', 'd']);
   });
 
-  it('never prunes the patch just saved, even when it alone is over the cap', () => {
-    expect(leftoversToPrune([patch('new', 500, 0), patch('b', 1, 1)], now, 'new', 30 * day, 100)).toEqual(['b']);
+  it("never prunes the patch just saved, and one over the cap alone doesn't push the others out", () => {
+    expect(leftoversToPrune([patch('new', 500, 0), patch('b', 60, 1), patch('c', 60, 2)], now, 'new', 30 * day, 100)).toEqual(['c']);
   });
 });
 
