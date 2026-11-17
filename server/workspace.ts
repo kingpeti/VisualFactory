@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HOME_DIR, WORKSPACE_ROOT } from './config.ts';
 import { type CommandError, gh, git, run } from './exec.ts';
+import { debugLog } from './log.ts';
 
 // Layout on disk:
 //   <your projects folder>/<repo>                    the floor's main checkout: your own folder, only fetched and fast-forwarded (syncMain)
@@ -41,6 +42,12 @@ async function exists(p: string) {
 // Tool droppings that should never be committed from a desk (shared by all worktrees of the clone).
 // .preview-tmp/ is the preview worktree's {tmp} scratch folder.
 const LOCAL_EXCLUDES = ['.playwright-mcp/', '.preview-tmp/'];
+
+// Saved work (<HOME_DIR>/leftovers): every save prunes the patches there, oldest first, to these limits, and a file
+// over LEFTOVER_FILE_MAX_BYTES stays out of a patch (a dump or a build output, not unfinished work).
+const LEFTOVERS_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const LEFTOVERS_MAX_BYTES = 500 * 1024 * 1024;
+const LEFTOVER_FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 async function addLocalExcludes(main: string) {
   const file = path.join(main, '.git', 'info', 'exclude');
@@ -342,9 +349,10 @@ export function prepareDesk(fullName: string, base: DeskBase, agentSlug: string,
 /**
  * Save what a desk's last job left before it is reset for the next one, as a patch named after the branch the desk is
  * on (or its short commit, when detached). A `qa/pr-*` desk is checked out at the PR's head and holds no work of its
- * own. Commits the default branch `baseRef` already has (a squash-merged branch, deleted from the remote) are not
- * saved: they are not unfinished. A stale index.lock is cleared first, or it would make the save fail and the work
- * would be lost. A failed save only leaves a note: the desk still gets reused.
+ * own, and neither does a preview's (`swarm-preview*`, set up again on every preview restart). Commits the default
+ * branch `baseRef` already has (a squash-merged branch, deleted from the remote) are not saved: they are not
+ * unfinished. A stale index.lock is cleared first, or it would make the save fail and the work would be lost. A failed
+ * save only leaves a note: the desk still gets reused.
  */
 async function saveBeforeReuse(wt: string, fullName: string, baseRef: string, note?: (text: string) => void) {
   const g = (args: string[]) => git(args, { cwd: wt, timeoutMs: 60_000 });
@@ -357,12 +365,14 @@ async function saveBeforeReuse(wt: string, fullName: string, baseRef: string, no
       note?.(`Removed a stale git lock (${lock}) left in the desk.`);
     }
     const branch = (await g(['symbolic-ref', '--short', '-q', 'HEAD']).catch(() => '')).trim();
-    if (/^qa\/pr-/.test(branch)) return;
+    if (/^(qa\/pr-|swarm-preview)/.test(branch)) return;
     const from = branch || (await g(['rev-parse', '--short', 'HEAD'])).trim();
-    const patch = await saveLeftovers(fullName, wt, from.replace(/[^\w.-]+/g, '-'), baseRef);
+    const patch = await saveLeftovers(fullName, wt, from.replace(/[^\w.-]+/g, '-'), baseRef, note);
     if (patch) note?.(`Saved unfinished work from ${from} to ${patch}.`);
   } catch (err) {
-    note?.(`Saving the desk's unfinished work failed: ${(err as Error).message.split(/\r?\n/)[0]}`);
+    const message = (err as Error).message.split(/\r?\n/)[0];
+    console.warn('[workspace] saving a desk before reuse failed', { desk: wt, error: message });
+    note?.(`Saving the desk's unfinished work failed: ${message}`);
   }
 }
 
@@ -565,38 +575,109 @@ const stamp = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStar
  * carries the new files once they're intent-to-added). When `baseRef` (the default branch in the desk's clone) is
  * given, a commit a squash merge already put into it is not saved: the branch was deleted from the remote, so the
  * commits would count as unpushed, but merging the desk into `baseRef` changes nothing; a failed merge (a conflict,
- * an old git without `merge-tree --write-tree`) keeps them. Null: nothing to save.
+ * an old git without `merge-tree --write-tree`) keeps them. An uncommitted or new file over LEFTOVER_FILE_MAX_BYTES
+ * stays out (`note` names it); committed files are saved whatever their size. Each save prunes the saved patches
+ * (pruneLeftovers). Null: nothing to save.
  */
-async function saveLeftovers(fullName: string, desk: string, label = path.basename(desk), baseRef?: string): Promise<string | null> {
+async function saveLeftovers(fullName: string, desk: string, label = path.basename(desk), baseRef?: string, note?: (text: string) => void): Promise<string | null> {
   const g = (args: string[]) => git(args, { cwd: desk, timeoutMs: 60_000 });
   if (!(await g(['rev-parse', '--verify', '-q', 'HEAD']).catch(() => ''))) return null;
   const dirty = await g(['status', '--porcelain', '--untracked-files=no']);
+  const edited = dirty ? (await g(['diff', 'HEAD', '--name-only', '-z'])).split('\0').filter(Boolean) : [];
   // Untracked files that the project's .gitignore does not cover (ignored ones, like node_modules, stay out).
   const untracked = (await g(['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean);
+  const big = new Set(await oversized(desk, [...edited, ...untracked]));
+  if (big.size) {
+    const names = [...big];
+    console.warn('[workspace] left files too big for a patch out of the saved work', { desk, files: names });
+    const more = names.length > 3 ? ` and ${names.length - 3} more` : '';
+    note?.(`Left ${names.length} file${names.length === 1 ? '' : 's'} over ${LEFTOVER_FILE_MAX_BYTES / 1024 / 1024} MB out of the saved work: ${names.slice(0, 3).join(', ')}${more}.`);
+  }
+  const edits = edited.filter((file) => !big.has(file));
+  const added = untracked.filter((file) => !big.has(file));
   let commits = Number(await g(['rev-list', '--count', 'HEAD', '--not', '--remotes']));
   if (commits && baseRef) {
     const merged = (await g(['merge-tree', '--write-tree', baseRef, 'HEAD']).catch(() => '')).trim();
     if (merged && merged === (await g(['rev-parse', `${baseRef}^{tree}`]).catch(() => '')).trim()) commits = 0;
   }
-  if (!dirty && !untracked.length && !commits) return null;
+  if (!edits.length && !added.length && !commits) return null;
   const dir = path.join(HOME_DIR, 'leftovers', fullName.replace('/', '__'));
   await fs.mkdir(dir, { recursive: true });
   const tmp = await fs.mkdtemp(path.join(dir, '.tmp-'));
   try {
     // New files are intent-to-added (index entry, no content) so `git diff HEAD` lists them as new files. Chunked,
     // like the branch sweeps: a few hundred new files would exceed Windows' 32,767-character command line.
-    for (let i = 0; i < untracked.length; i += 100) await g(['add', '-N', '--', ...untracked.slice(i, i + 100)]);
+    for (let i = 0; i < added.length; i += 100) await g(['add', '-N', '--', ...added.slice(i, i + 100)]);
     // Written to files, not read from stdout: exec trims it, and a patch's trailing whitespace matters.
     if (commits) await g(['format-patch', '-q', '-o', tmp, 'HEAD', '--not', '--remotes']);
-    if (dirty || untracked.length) await g(['diff', 'HEAD', '--binary', `--output=${path.join(tmp, 'zz-uncommitted.patch')}`]);
+    const skip = edited.filter((file) => big.has(file)).map((file) => `:(exclude,literal)${file}`);
+    if (edits.length || added.length) await g(['diff', 'HEAD', '--binary', `--output=${path.join(tmp, 'zz-uncommitted.patch')}`, '--', '.', ...skip]);
     const parts = (await fs.readdir(tmp)).sort();
     const base = `${label}-${stamp(new Date())}`;
     let file = path.join(dir, `${base}.patch`);
     for (let n = 2; await exists(file); n++) file = path.join(dir, `${base}-${n}.patch`);
-    await fs.writeFile(file, Buffer.concat(await Promise.all(parts.map((p) => fs.readFile(path.join(tmp, p))))));
+    const body = Buffer.concat(await Promise.all(parts.map((p) => fs.readFile(path.join(tmp, p)))));
+    await fs.writeFile(file, body);
+    debugLog('workspace', 'saved leftovers', { desk, commits, files: edits.length + added.length, bytes: body.length });
+    await pruneLeftovers(file);
     return file;
   } finally {
     await removeDir(tmp).catch(() => undefined);
+  }
+}
+
+/** The files among `files` (relative to `dir`) over LEFTOVER_FILE_MAX_BYTES; a deleted file is none of them. */
+async function oversized(dir: string, files: readonly string[]): Promise<string[]> {
+  const sizes = await Promise.all(files.map(async (file) => (await fs.stat(path.join(dir, file)).catch(() => null))?.size ?? 0));
+  return files.filter((_file, index) => (sizes[index] ?? 0) > LEFTOVER_FILE_MAX_BYTES);
+}
+
+/** A saved patch in <HOME_DIR>/leftovers. */
+export interface LeftoverPatch {
+  file: string;
+  bytes: number;
+  mtimeMs: number;
+}
+
+/**
+ * The saved patches to delete: those older than `maxAgeMs`, and, oldest first, those that would take the rest past
+ * `maxBytes` in all. `keep` (the patch just saved) always stays and counts towards `maxBytes`.
+ */
+export function leftoversToPrune(patches: readonly LeftoverPatch[], now: number, keep: string, maxAgeMs = LEFTOVERS_MAX_AGE_MS, maxBytes = LEFTOVERS_MAX_BYTES): string[] {
+  const prune: string[] = [];
+  let total = patches.find((patch) => patch.file === keep)?.bytes ?? 0;
+  let full = false;
+  for (const patch of [...patches].sort((a, b) => b.mtimeMs - a.mtimeMs)) {
+    if (patch.file === keep) continue;
+    // Once one doesn't fit, every older one goes too: the newest work is the one worth keeping.
+    full ||= total + patch.bytes > maxBytes;
+    if (full || now - patch.mtimeMs > maxAgeMs) prune.push(patch.file);
+    else total += patch.bytes;
+  }
+  return prune;
+}
+
+/** Delete the saved patches leftoversToPrune picks, across every floor's folder. Never throws: a save must not fail on it. */
+async function pruneLeftovers(keep: string) {
+  try {
+    const root = path.join(HOME_DIR, 'leftovers');
+    const patches: LeftoverPatch[] = [];
+    for (const repo of await fs.readdir(root, { withFileTypes: true })) {
+      if (!repo.isDirectory()) continue;
+      for (const entry of await fs.readdir(path.join(root, repo.name), { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.patch')) continue;
+        const file = path.join(root, repo.name, entry.name);
+        const stat = await fs.stat(file);
+        patches.push({ file, bytes: stat.size, mtimeMs: stat.mtimeMs });
+      }
+    }
+    const prune = new Set(leftoversToPrune(patches, Date.now(), keep));
+    if (!prune.size) return;
+    for (const file of prune) await fs.rm(file, { force: true, maxRetries: 3 });
+    const bytes = patches.filter((patch) => prune.has(patch.file)).reduce((sum, patch) => sum + patch.bytes, 0);
+    debugLog('workspace', 'pruned', { removed: prune.size, bytes });
+  } catch (err) {
+    console.warn('[workspace] pruning saved leftovers failed', { error: (err as Error).message });
   }
 }
 
