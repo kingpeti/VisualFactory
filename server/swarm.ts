@@ -21,6 +21,7 @@ import { fixGoesTo, pickTester, PREP_HOLD_MS, prepFailure, prepHeld, type PrepSt
 import { HttpError } from './httpError.ts';
 import { IssueAges } from './issueAges.ts';
 import { issuesResolvedBy, issueTaken } from './issueClaims.ts';
+import { debugLog } from './log.ts';
 import { CHECKS_ALERT_MS, failedRunIds, MAX_MERGE_FIXES, MERGE_RETRY_MS, mergeStep } from './mergeGate.ts';
 import { orphanedQa } from './qaOrphans.ts';
 import { catchUp, failedRunId, logTail, noChangeReason, PR_LIMITS_VERSION, QA_STOPPED, unpushedFix } from './prOwnership.ts';
@@ -59,6 +60,7 @@ import { WeatherService } from './weather.ts';
 import { blockers, holdUps, waitsMessage } from '../shared/issues.ts';
 import { dayKey, journalFrame, legacyAgent, legacyRequest } from '../shared/journal.ts';
 import { cleanStyle, HAIR_COLORS, SKIN_TONES, type AgentStyle } from '../shared/looks.ts';
+import { MESSAGE_MAX, messageProblem } from '../shared/message.ts';
 import { achievementDef, type ProgressView } from '../shared/progress.ts';
 import { parsePongResult, PONG_PLAYER, recordGame } from '../shared/pong.ts';
 import { effectiveModel } from '../shared/models.ts';
@@ -484,6 +486,18 @@ function isResync(raw: unknown): boolean {
 const ICON = { pass: '✅', fail: '❌', skip: '⏭️' } as const;
 
 const clampMaxAgents = (n: unknown) => Math.max(1, Math.min(FLOOR_SEATS, Math.round(Number(n)) || DEFAULT_MAX_AGENTS));
+
+/** Refuses a manager's message to `to` (an agent's id) the way messageProblem words it: empty, or over MESSAGE_MAX
+ * (never cut short). */
+function checkMessage(to: string, text: string) {
+  const problem = messageProblem(text);
+  const chars = text.trim().length;
+  if (problem) {
+    if (chars > MESSAGE_MAX) console.warn('[messages] refused an oversize message', { to, chars });
+    throw new HttpError(400, problem);
+  }
+  debugLog('messages', 'manager message', { to, chars });
+}
 
 export { HttpError };
 
@@ -3682,7 +3696,8 @@ export class Swarm {
     const a = this.agent(id);
     if (a.role === 'ceo') return this.messageCeo(text);
     const repo = this.repo(a.repoId);
-    if (!text.trim()) throw new HttpError(400, 'Empty message');
+    checkMessage(id, text);
+    text = text.trim();
     const rt = this.agentRt.get(id)!;
     if (rt.session) {
       this.appendLog(a, [{ kind: 'manager', text: `▶ Manager: ${text}` }]);
@@ -4413,8 +4428,8 @@ export class Swarm {
 
   /** The manager's phone → the CEO. Injected into a running session, otherwise the CEO picks it up next. */
   async messageCeo(text: string) {
-    const t = text.trim().slice(0, 4000);
-    if (!t) throw new HttpError(400, 'Empty message');
+    checkMessage(CEO_ID, text);
+    const t = text.trim();
     const a = this.ceo();
     this.postMessage('manager', t);
     const rt = this.agentRt.get(a.id)!;
@@ -5020,7 +5035,8 @@ export class Swarm {
   // ---------- the phone ----------
 
   private postMessage(from: PhoneMessage['from'], text: string, requestId?: string) {
-    const m: PhoneMessage = { id: this.messageSeq++, from, text: text.trim().slice(0, 6000), at: Date.now(), ...(requestId ? { requestId } : {}) };
+    const clipped = from === 'manager' ? text.trim().slice(0, MESSAGE_MAX) : text.trim().slice(0, 6000);
+    const m: PhoneMessage = { id: this.messageSeq++, from, text: clipped, at: Date.now(), ...(requestId ? { requestId } : {}) };
     const v = this.state.settings.voice;
     if (v.provider !== 'off' && speaks(m, v)) m.voice = v.provider; // what the phone's ▶ replays it with
     this.state.messages.push(m);

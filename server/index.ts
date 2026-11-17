@@ -6,6 +6,7 @@ import type { AddressInfo, Socket } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { z } from 'zod';
 import { CLIP_MAX_BYTES, CLIP_TOO_BIG } from '../shared/clipLimits.ts';
+import { MESSAGE_MAX } from '../shared/message.ts';
 import { DAY_PARTS } from '../shared/speech.ts';
 import { DEMO, DEMO_SCALE, HOST, PORT, STATE_FILE, VERSION, WORKSPACE_ROOT, isLoopback, localAddress, networkUrls } from './config.ts';
 import { MACHINES_DIR } from './workspace.ts';
@@ -182,7 +183,7 @@ app.delete('/api/agents/:id', route((req) => swarm.fireAgent(String(req.params.i
 app.post('/api/agents/:id/assign', route((req) => swarm.assign(String(req.params.id), num(req.body.issueNumber), str(req.body.note) || undefined, req.body?.waitForDeps === true)));
 app.post('/api/agents/:id/stop', route((req) => swarm.stopAgent(String(req.params.id))));
 app.post('/api/agents/:id/reset', route((req) => swarm.resetAgent(String(req.params.id))));
-app.post('/api/agents/:id/message', route((req) => swarm.message(String(req.params.id), str(req.body.text))));
+app.post('/api/agents/:id/message', route((req) => swarm.message(String(req.params.id), parse(messageBody, req.body).text)));
 app.post('/api/agents/:id/sign-in', route((req) => swarm.signIn(String(req.params.id))));
 app.get('/api/agents/:id/prompt', route((req) => swarm.agentPrompt(String(req.params.id))));
 app.get('/api/agents/:id/screen', (req, res) => {
@@ -201,6 +202,8 @@ const parse = <T>(schema: z.ZodType<T>, value: unknown): T => {
   if (!r.success) throw new HttpError(400, r.error.issues.map((i) => `${i.path.join('.') || 'request'}: ${i.message}`).join('; '));
   return r.data;
 };
+// A manager's message to an agent or the CEO. A generous cap here: Swarm refuses one over MESSAGE_MAX in its own words.
+const messageBody = z.object({ text: z.string().max(MESSAGE_MAX * 2) });
 const sendAudio = (res: Response, audio: Buffer, cache = 'private, max-age=3600') => {
   // Real clips are mp3; the demo's chime is a WAV.
   res.setHeader('Content-Type', audio.subarray(0, 4).toString('latin1') === 'RIFF' ? 'audio/wav' : 'audio/mpeg');
@@ -284,7 +287,7 @@ app.get(
 app.post('/api/journal/sample', route(() => swarm.journalSample()));
 
 // The CEO and the manager's phone
-app.post('/api/ceo/message', route((req) => swarm.messageCeo(str(req.body.text))));
+app.post('/api/ceo/message', route((req) => swarm.messageCeo(parse(messageBody, req.body).text)));
 app.post('/api/ceo/review', route(() => swarm.requestReview()));
 app.post('/api/phone/read', route((req) => swarm.markPhoneRead(Number(req.body?.at) || Date.now())));
 app.post(
