@@ -35,17 +35,17 @@ const S23 = { deviceScaleFactor: 3, hasTouch: true, isMobile: true };
 const TILE = '.dash-tile';
 const DRAWER = '.dash-drawer';
 
-/** The dashboard's terminals view; a selector for the first working agent's read-only tile (the demo starts busy). */
+/** The dashboard's terminals view; a selector for the first read-only tile there with a terminal, whatever its agent
+ * is doing (a long-lived demo office runs out of working agents; shownTokens doesn't care). */
 async function openTile(page: Page): Promise<string> {
   await page.goto('/?office=2d&tab=team');
-  const working = page.locator(TILE).filter({ has: page.locator('.status-working') }).first();
-  await expect(working.locator('.live-term-screen')).toBeVisible({ timeout: 30_000 });
-  await expect(working.locator('.xterm-rows')).toBeVisible();
-  return `${TILE}[aria-label="${await working.getAttribute('aria-label')}"]`;
+  const first = page.locator(TILE).filter({ has: page.locator('.live-term-screen') }).first();
+  await expect(first.locator('.xterm-rows')).toBeVisible({ timeout: 30_000 });
+  return `${TILE}[aria-label="${await first.getAttribute('aria-label')}"]`;
 }
 
-/** That agent in the drawer, whose terminal takes keys; returns their tile's selector. */
-async function openWorkingAgentTerminal(page: Page): Promise<string> {
+/** That tile's agent in the drawer, whose terminal takes keys; returns the tile's selector. */
+async function openAgentTerminal(page: Page): Promise<string> {
   const tile = await openTile(page);
   await page.locator(`${tile} .dash-tile-name`).click();
   await expect(page.locator(`${DRAWER} .live-term-screen`)).toBeVisible();
@@ -82,11 +82,12 @@ async function shownTokens(page: Page, scope = DRAWER) {
   return { lowest: Math.min(...numbers), highest: Math.max(...numbers) };
 }
 
-/** Types the overflow into the drawer's terminal and waits for its last token to be echoed into `scope`. */
+/** Types the overflow into the drawer's terminal and waits for most of it to be echoed into `scope` (a working agent
+ * prints on below it, so its very last token may already be pushed out of a short terminal). */
 async function typeOverflow(page: Page, scope = DRAWER) {
   await page.locator(`${DRAWER} .live-term-screen`).click(); // focus, so the text goes into the terminal
   await page.keyboard.insertText(OVERFLOW_TEXT);
-  await expect.poll(async () => (await shownTokens(page, scope)).highest).toBe(TOKENS - 1);
+  await expect.poll(async () => (await shownTokens(page, scope)).highest).toBeGreaterThan(TOKENS / 2);
 }
 
 /** What the page sends on every /ws/term socket from now on, read with `termSends`. */
@@ -114,7 +115,7 @@ test.describe('touch on a real phone', () => {
       test.use({ viewport });
 
       test('a tap with no movement focuses the terminal for typing', async ({ page }) => {
-        await openWorkingAgentTerminal(page);
+        await openAgentTerminal(page);
         const cdp = await page.context().newCDPSession(page);
         const box = await visibleBox(page, `${DRAWER} .live-term-screen`);
         const pt = { x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 };
@@ -125,7 +126,7 @@ test.describe('touch on a real phone', () => {
 
       test('a one-finger swipe scrolls the scrollback, both directions', async ({ page }) => {
         test.setTimeout(60_000);
-        await openWorkingAgentTerminal(page);
+        await openAgentTerminal(page);
         await typeOverflow(page);
 
         const cdp = await page.context().newCDPSession(page);
@@ -148,7 +149,7 @@ test.describe('touch on a real phone', () => {
       test('a read-only grid tile scrolls on a swipe, and sends neither keys nor a resize', async ({ page }) => {
         test.setTimeout(60_000);
         await recordTermSends(page);
-        const tile = await openWorkingAgentTerminal(page);
+        const tile = await openAgentTerminal(page);
         await typeOverflow(page, tile);
         await page.locator(DRAWER).getByRole('button', { name: 'Close (Esc)' }).click();
         await expect(page.locator(DRAWER)).toHaveCount(0);
@@ -170,7 +171,7 @@ test.describe('touch on a real phone', () => {
 });
 
 test('desktop: the mouse wheel still scrolls the terminal', async ({ page }) => {
-  await openWorkingAgentTerminal(page);
+  await openAgentTerminal(page);
   await typeOverflow(page);
   const box = await visibleBox(page, `${DRAWER} .live-term-screen`);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
