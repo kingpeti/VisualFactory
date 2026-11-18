@@ -75,10 +75,12 @@ async function allRowsText(page: Page, scope = DRAWER) {
   return (await page.locator(`${scope} .xterm-rows > div`).allTextContents()).join('');
 }
 
-/** The typed tokens on screen in `scope`'s terminal, lowest and highest (Infinity / -Infinity when none is). The
- * agent's own output can push them up but never brings an earlier one back: only scrolling up does. */
+/** The typed tokens on screen in `scope`'s terminal, lowest and highest (NaN when none is, so no comparison passes on
+ * an empty screen). The agent's own output can push them up but never brings an earlier one back: only scrolling up
+ * does. */
 async function shownTokens(page: Page, scope = DRAWER) {
   const numbers = [...(await allRowsText(page, scope)).matchAll(/\bn(\d+)\b/g)].map((match) => Number(match[1]));
+  if (numbers.length === 0) return { lowest: NaN, highest: NaN };
   return { lowest: Math.min(...numbers), highest: Math.max(...numbers) };
 }
 
@@ -146,17 +148,35 @@ test.describe('touch on a real phone', () => {
         await expect.poll(async () => (await shownTokens(page)).lowest).toBeGreaterThan(scrolled);
       });
 
-      test('a read-only grid tile leaves a swipe to the browser, and sends neither keys nor a resize', async ({ page }) => {
+      test('a read-only grid tile scrolls its scrollback, and sends neither keys nor a resize', async ({ page }) => {
+        test.setTimeout(60_000);
         await recordTermSends(page);
-        const tile = await openTile(page);
-        // The tile keeps the agent's own size: the browser's pan, both ways, reaches all of it.
-        expect(await page.locator(`${tile} .live-term-screen`).evaluate((el) => getComputedStyle(el).touchAction)).toBe('auto');
+        const tile = await openAgentTerminal(page);
+        await typeOverflow(page, tile); // typed in the drawer: the tile shows the same screen
+        // Closed with its button: Esc would go to the agent.
+        await page.locator(`${DRAWER} .panel-x`).click();
+        await expect(page.locator(DRAWER)).toHaveCount(0);
+        await termSends(page); // the drawer's keys and resizes, not the tile's
+        // The tile keeps the agent's own size: the browser pans it sideways, the vertical swipes are LiveTerminal's.
+        const screen = `${tile} .live-term-screen`;
+        expect(await page.locator(screen).evaluate((element) => getComputedStyle(element).touchAction)).toBe('pan-x pinch-zoom');
         const cdp = await page.context().newCDPSession(page);
-        const box = await visibleBox(page, `${tile} .live-term-screen`);
+        const box = await visibleBox(page, screen);
         const x = box.x + box.width / 2;
-        await touchStart(cdp, [{ x, y: box.y + box.height / 2, id: 20 }]); // a tap
+
+        // Drags down take the tile's box to its top, then earlier output into view: every row of the agent's screen
+        // is rendered whatever the box shows, so only the scrollback moving lowers the lowest token.
+        const before = (await shownTokens(page, tile)).lowest;
+        let id = 20;
+        await expect
+          .poll(async () => {
+            await dragY(cdp, id++, x, box.y + box.height * 0.3, box.y + box.height * 0.8);
+            return (await shownTokens(page, tile)).lowest;
+          })
+          .toBeLessThan(before);
+
+        await touchStart(cdp, [{ x, y: box.y + box.height / 2, id: id++ }]); // a tap
         await touchEnd(cdp);
-        await dragY(cdp, 21, x, box.y + box.height * 0.8, box.y + box.height * 0.3);
         await page.keyboard.type('x');
         expect(await termSends(page)).toEqual([]);
       });

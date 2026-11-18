@@ -27,3 +27,20 @@ export function touchScrollLines(deltaY: number, carryPx: number, lineHeightPx: 
 export function pastScrollThreshold(dx: number, dy: number, thresholdPx = SCROLL_THRESHOLD_PX): boolean {
   return Math.hypot(dx, dy) > thresholdPx;
 }
+
+export interface NestedScroll {
+  /** Where the box's `scrollTop` goes. */
+  scrollTop: number;
+  /** The part of `deltaY` the box couldn't take, left for the terminal's scrollback (`touchScrollLines`). */
+  restPx: number;
+}
+
+/** A read-only tile's vertical drag of `deltaY` px: its box, which can be shorter than the agent's screen, moves first
+ * while it can (dragging down shows its top, like a page), and only the rest reaches the scrollback. `scrollTop` is
+ * clamped to [0, maxScrollTop] first, since layout rounding can leave it a fraction outside. */
+export function nestedScroll(deltaY: number, scrollTop: number, maxScrollTop: number): NestedScroll {
+  const clamp = (value: number) => Math.min(Math.max(value, 0), Math.max(maxScrollTop, 0));
+  const top = clamp(scrollTop);
+  const next = clamp(top - deltaY);
+  return { scrollTop: next, restPx: deltaY - (top - next) };
+}

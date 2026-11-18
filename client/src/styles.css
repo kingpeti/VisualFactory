@@ -1516,12 +1516,13 @@ input.inline:focus {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  touch-action: none; /* a swipe scrolls the terminal (LiveTerminal.tsx); don't let the browser pan the panel instead */
+  touch-action: pinch-zoom; /* a swipe scrolls the terminal (LiveTerminal.tsx), not the panel; a pinch still zooms */
 }
-/* A read-only terminal keeps the agent's own size, which can be bigger than its tile: a swipe pans it */
+/* A read-only terminal keeps the agent's own size, which can be bigger than its tile: the browser pans it sideways, a
+   vertical swipe moves it, then its scrollback (LiveTerminal.tsx) */
 .live-term-readonly .live-term-screen {
   overflow: auto;
-  touch-action: auto;
+  touch-action: pan-x pinch-zoom;
 }
 /* The padding sits on .xterm itself: the fit addon subtracts that element's padding, not its parent's. */
 .live-term-screen .xterm {

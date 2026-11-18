@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pastScrollThreshold, SCROLL_THRESHOLD_PX, touchScrollLines } from './termTouch';
+import { nestedScroll, pastScrollThreshold, SCROLL_THRESHOLD_PX, touchScrollLines } from './termTouch';
 
 describe('pastScrollThreshold', () => {
   it('is false right at the threshold, true just past it', () => {
@@ -39,5 +39,30 @@ describe('touchScrollLines', () => {
   it('does nothing with no usable line height', () => {
     expect(touchScrollLines(100, 0, 0)).toEqual({ lines: 0, carryPx: 0 });
     expect(touchScrollLines(100, 0, -5)).toEqual({ lines: 0, carryPx: 0 });
+  });
+});
+
+describe('nestedScroll', () => {
+  it('moves the box up to its top on a drag down, leaving the rest for the scrollback', () => {
+    expect(nestedScroll(50, 30, 100)).toEqual({ scrollTop: 0, restPx: 20 });
+  });
+
+  it('moves the box down to its bottom on a drag up, leaving the rest', () => {
+    expect(nestedScroll(-50, 80, 100)).toEqual({ scrollTop: 100, restPx: -30 });
+  });
+
+  it('keeps the whole drag in the box while it can move', () => {
+    expect(nestedScroll(10, 30, 100)).toEqual({ scrollTop: 20, restPx: 0 });
+    expect(nestedScroll(-10, 30, 100)).toEqual({ scrollTop: 40, restPx: 0 });
+  });
+
+  it('passes the whole drag on when the box does not overflow', () => {
+    expect(nestedScroll(40, 0, 0)).toEqual({ scrollTop: 0, restPx: 40 });
+    expect(nestedScroll(-40, 0, -3)).toEqual({ scrollTop: 0, restPx: -40 });
+  });
+
+  it('clamps a scrollTop outside the box first', () => {
+    expect(nestedScroll(10, 150, 100)).toEqual({ scrollTop: 90, restPx: 0 });
+    expect(nestedScroll(10, -5, 100)).toEqual({ scrollTop: 0, restPx: 10 });
   });
 });
