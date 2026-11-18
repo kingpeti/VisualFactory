@@ -7,7 +7,7 @@ import { api } from '../api';
 import { PreviewPill, PreviewSettings } from './AppViewer';
 import { agentsOnRepo, pendingRequests, useStore, type Agent } from '../store';
 import { CEO_ID, DEFAULT_MAX_AGENTS, FLOOR_SEATS, type AgentCli, type EffortLevel, type OfficeUpdateView, type RepoView } from '../../../shared/types';
-import { MESSAGE_MAX } from '../../../shared/message';
+import { messageProblem } from '../../../shared/message';
 import { CLAUDE_MODELS, modelSuggestions } from '../../../shared/models';
 import { CliOptions, CliSelect, cliName, EFFORTS, EffortSelect, LookSelect, ModelInput, NameInput, PromptPreview } from './AgentSettings';
 import { canPostpone, canUpdateNow, drainDeadline, officeUpdateText } from '../officeUpdate';
@@ -107,6 +107,13 @@ export function CeoTab({ onOpenPhone }: { onOpenPhone?: () => void }) {
   const pending = pendingRequests(requests);
   const send = (t: string) => {
     if (!t.trim()) return;
+    // Over the limit: refuse with the server's words and keep the draft (mic auto-send has already cleared the box).
+    const problem = messageProblem(t);
+    if (problem) {
+      setText(t);
+      useStore.getState().pushToast('error', problem);
+      return;
+    }
     setText('');
     void attempt(() => api.messageCeo(t));
   };
@@ -158,7 +165,7 @@ export function CeoTab({ onOpenPhone }: { onOpenPhone?: () => void }) {
               send(text);
             }}
           >
-            <input value={text} onChange={(e) => setText(e.target.value)} placeholder={`Message ${ceo.name} (or press P anywhere for your phone)…`} maxLength={MESSAGE_MAX} />
+            <input value={text} onChange={(e) => setText(e.target.value)} placeholder={`Message ${ceo.name} (or press P anywhere for your phone)…`} />
             <MicButton kind="console" value={text} onChange={setText} onSend={send} />
             <button className="btn" disabled={!text.trim()}>
               Send

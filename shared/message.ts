@@ -1,5 +1,5 @@
-// How long a manager's message to the CEO or an agent can be (#37): the client caps the box at this length and the
-// server rejects anything over it outright, with the same words on both sides. No truncation.
+// How long a manager's message to the CEO or an agent can be (#37): the client refuses to send anything over it and
+// keeps the draft, and the server rejects it outright, with the same words on both sides. No truncation.
 
 /** The longest message the manager can send. */
 export const MESSAGE_MAX = 60_000;

@@ -1,8 +1,8 @@
 import { type Page } from '@playwright/test';
 import { enterOffice, expect, test } from './helpers';
 
-// A message to the CEO can be up to 60,000 characters and arrives whole (#37); over that it's refused with a 400,
-// never cut silently. Follows chatNewline.spec.ts for opening the phone's CEO chat.
+// A message to the CEO can be up to 60,000 characters and arrives whole (#37); over that the chat refuses it and the
+// server answers 400, never cut silently. Follows chatNewline.spec.ts for opening the phone's CEO chat.
 
 const box = (page: Page) => page.locator('.chat-input .msg-box');
 const sendButton = (page: Page) => page.locator('.chat-input button.btn-good');
@@ -32,15 +32,22 @@ test('a 10,000-character message to the CEO arrives whole', async ({ page }) => 
 
   await expect(myBubbles(page)).toHaveCount(before + 1);
   const sent = await myBubbles(page).last().innerText();
-  expect(sent).toContain(marker);
-  expect(sent.length).toBeGreaterThanOrEqual(10_000);
+  expect(sent).toBe(long);
 });
 
-test('the chat box caps input at 60,000 characters', async ({ page }) => {
+test('the chat refuses a message over 60,000 characters and keeps the draft', async ({ page }) => {
   await page.goto('/');
   await enterOffice(page, { loaded: true });
   await openChat(page);
-  await expect(box(page)).toHaveAttribute('maxlength', '60000');
+  const before = await myBubbles(page).count();
+
+  const tooLong = 'x'.repeat(60_001);
+  await box(page).fill(tooLong);
+  await sendButton(page).click();
+
+  await expect(page.locator('.toast.toast-error')).toContainText('limit is 60,000');
+  await expect(box(page)).toHaveValue(tooLong);
+  await expect(myBubbles(page)).toHaveCount(before);
 });
 
 test('over 60,000 characters is refused with a 400', async ({ page }) => {

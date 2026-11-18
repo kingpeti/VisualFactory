@@ -1,5 +1,4 @@
 import { useLayoutEffect, useRef, type TextareaHTMLAttributes } from 'react';
-import { MESSAGE_MAX } from '../../../shared/message';
 
 // The message box shared by the phone's CEO chat and the agent terminal: Enter sends,
 // Shift+Enter adds a line. It starts one line tall, grows to about six, then scrolls.
@@ -24,7 +23,6 @@ export function MessageBox({ value, onChange, className, onKeyDown, ...rest }: P
 
   return (
     <textarea
-      maxLength={MESSAGE_MAX}
       {...rest}
       ref={ref}
       rows={1}
