@@ -349,12 +349,14 @@ export function prepareDesk(fullName: string, base: DeskBase, agentSlug: string,
 /**
  * Save what a desk's last job left before it is reset for the next one, as a patch named after the branch the desk is
  * on (or its short commit, when detached). A `qa/pr-*` desk is checked out at the PR's head and holds no work of its
- * own, and neither does a preview's (`swarm-preview*`, set up again on every preview restart). Commits the default
+ * own, and neither does a preview's (`swarm-preview*`, set up again on every preview restart; told by the `target`
+ * branch too, as it is detached when another worktree holds that branch). Commits the default
  * branch `baseRef` already has (a squash-merged branch, deleted from the remote) are not saved: they are not
  * unfinished. A stale index.lock is cleared first, or it would make the save fail and the work would be lost. A failed
  * save only leaves a note: the desk still gets reused.
  */
-async function saveBeforeReuse(wt: string, fullName: string, baseRef: string, note?: (text: string) => void) {
+async function saveBeforeReuse(wt: string, fullName: string, baseRef: string, target: string, note?: (text: string) => void) {
+  if (target.startsWith('swarm-preview')) return;
   const g = (args: string[]) => git(args, { cwd: wt, timeoutMs: 60_000 });
   try {
     // A git that died mid-command leaves index.lock behind: it would make the save's `add -N` fail and the whole
@@ -414,7 +416,7 @@ async function setUpWorktree(main: string, wt: string, fullName: string, base: D
   // node_modules warm between tasks.
   if (await exists(path.join(wt, '.git'))) {
     // Keep whatever the previous job left (unpushed commits, uncommitted and new files) before the desk is reset.
-    await saveBeforeReuse(wt, fullName, `origin/${base.defaultBranch}`, note);
+    await saveBeforeReuse(wt, fullName, `origin/${base.defaultBranch}`, branch, note);
     try {
       try {
         await reuseDesk(wt, local, ref);
@@ -571,21 +573,24 @@ const stamp = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStar
 
 /**
  * Save a desk's modified tracked files, its new (untracked, non-ignored) files and the commits that are on no remote
- * branch to <HOME_DIR>/leftovers/<owner>__<repo>/<label>-<YYYYMMDD>.patch (format-patch, then `git diff HEAD`, which
- * carries the new files once they're intent-to-added). When `baseRef` (the default branch in the desk's clone) is
- * given, a commit a squash merge already put into it is not saved: the branch was deleted from the remote, so the
- * commits would count as unpushed, but merging the desk into `baseRef` changes nothing; a failed merge (a conflict,
- * an old git without `merge-tree --write-tree`) keeps them. An uncommitted or new file over LEFTOVER_FILE_MAX_BYTES
- * stays out (`note` names it); committed files are saved whatever their size. Each save prunes the saved patches
- * (pruneLeftovers). Null: nothing to save.
+ * branch to <HOME_DIR>/leftovers/<owner>__<repo>/<label>-<YYYYMMDD>.patch (format-patch, or `git log -p` when a merge
+ * is among the commits, then `git diff HEAD`, which carries the new files once they're intent-to-added). When
+ * `baseRef` (the default branch in the desk's clone) is given, a commit a squash merge already put into it is not
+ * saved: the branch was deleted from the remote, so the commits would count as unpushed, but merging the desk into
+ * `baseRef` changes nothing; a failed merge (a conflict, an old git without `merge-tree --write-tree`) keeps them.
+ * An uncommitted or new file over LEFTOVER_FILE_MAX_BYTES stays out (`note` names it); committed files are saved
+ * whatever their size. Each save prunes the saved patches (pruneLeftovers). Null: nothing to save.
  */
 async function saveLeftovers(fullName: string, desk: string, label = path.basename(desk), baseRef?: string, note?: (text: string) => void): Promise<string | null> {
   const g = (args: string[]) => git(args, { cwd: desk, timeoutMs: 60_000 });
   if (!(await g(['rev-parse', '--verify', '-q', 'HEAD']).catch(() => ''))) return null;
-  const dirty = await g(['status', '--porcelain', '--untracked-files=no']);
-  const edited = dirty ? (await g(['diff', 'HEAD', '--name-only', '-z'])).split('\0').filter(Boolean) : [];
+  // Each list's entries start with a status field: exec trims stdout, which would take a leading space off the first
+  // name. No renames, so a staged rename's old path is listed (deleted) too.
+  const status = (await g(['status', '--porcelain=v2', '-z', '--untracked-files=all', '--no-renames'])).split('\0');
+  const dirty = status.some((entry) => /^[1u] /.test(entry));
+  const edited = dirty ? (await g(['diff', 'HEAD', '--name-status', '--no-renames', '-z'])).split('\0').filter((_field, index) => index % 2 === 1) : [];
   // Untracked files that the project's .gitignore does not cover (ignored ones, like node_modules, stay out).
-  const untracked = (await g(['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean);
+  const untracked = status.filter((entry) => entry.startsWith('? ')).map((entry) => entry.slice(2));
   const big = new Set(await oversized(desk, [...edited, ...untracked]));
   if (big.size) {
     const names = [...big];
@@ -606,29 +611,46 @@ async function saveLeftovers(fullName: string, desk: string, label = path.basena
     // New files are intent-to-added (index entry, no content) so `git diff HEAD` lists them as new files. Chunked,
     // like the branch sweeps: a few hundred new files would exceed Windows' 32,767-character command line. A chunk
     // git refuses is retried a file at a time, and only the files it still refuses stay out: the commits and edits
-    // are saved whatever happens here.
+    // are saved whatever happens here. Literal pathspecs: a name like `:x` or `[ab].txt` is a file, not magic or a
+    // glob.
     const refused: string[] = [];
     for (let i = 0; i < added.length; i += 100) {
       const chunk = added.slice(i, i + 100);
-      if (await g(['add', '-N', '--', ...chunk]).then(() => true, () => false)) continue;
-      for (const file of chunk) await g(['add', '-N', '--', file]).catch(() => refused.push(file));
+      if (await g(['--literal-pathspecs', 'add', '-N', '--', ...chunk]).then(() => true, () => false)) continue;
+      for (const file of chunk) await g(['--literal-pathspecs', 'add', '-N', '--', file]).catch(() => refused.push(file));
     }
     if (refused.length) {
       console.warn('[workspace] left new files git would not add out of the saved work', { desk, files: refused });
       note?.(`Left ${refused.length} new file${refused.length === 1 ? '' : 's'} git would not add out of the saved work: ${refused.slice(0, 3).join(', ')}${refused.length > 3 ? ` and ${refused.length - 3} more` : ''}.`);
     }
     // Written to files, not read from stdout: exec trims it, and a patch's trailing whitespace matters.
-    if (commits) await g(['format-patch', '-q', '-o', tmp, 'HEAD', '--not', '--remotes']);
-    const skip = edited.filter((file) => big.has(file)).map((file) => `:(exclude,literal)${file}`);
-    if (edits.length || added.length) await g(['diff', 'HEAD', '--binary', `--output=${path.join(tmp, 'zz-uncommitted.patch')}`, '--', '.', ...skip]);
+    if (commits && Number(await g(['rev-list', '--count', '--merges', 'HEAD', '--not', '--remotes']))) {
+      // format-patch leaves merges out, and with them a conflict's resolution: each commit as its diff from its first
+      // parent instead.
+      await g(['log', '--reverse', '-p', '--binary', '--no-ext-diff', '--no-textconv', '--no-color', '-m', '--first-parent', '--format=email', `--output=${path.join(tmp, '0000-unpushed.patch')}`, 'HEAD', '--not', '--remotes']);
+    } else if (commits) {
+      await g(['format-patch', '-q', '-o', tmp, 'HEAD', '--not', '--remotes']);
+    }
+    // The uncommitted files by name, in chunks for the command line like `add -N` above.
+    const uncommitted = [...edits, ...added.filter((file) => !refused.includes(file))];
+    for (let i = 0; i < uncommitted.length; i += 100) {
+      const output = path.join(tmp, `zz-uncommitted-${String(i).padStart(6, '0')}.patch`);
+      await g(['--literal-pathspecs', 'diff', 'HEAD', '--no-renames', '--binary', `--output=${output}`, '--', ...uncommitted.slice(i, i + 100)]);
+    }
     const parts = (await fs.readdir(tmp)).sort();
+    const body = Buffer.concat(await Promise.all(parts.map((part) => fs.readFile(path.join(tmp, part)))));
+    if (!body.length) throw new Error('git wrote an empty patch');
     const base = `${label}-${stamp(new Date())}`;
-    let file = path.join(dir, `${base}.patch`);
-    for (let n = 2; await exists(file); n++) file = path.join(dir, `${base}-${n}.patch`);
-    const body = Buffer.concat(await Promise.all(parts.map((p) => fs.readFile(path.join(tmp, p)))));
-    await fs.writeFile(file, body);
-    debugLog('workspace', 'saved leftovers', { desk, commits, files: edits.length + added.length, bytes: body.length });
-    await pruneLeftovers(file);
+    // One save at a time across floors and machines: two saves of one branch would pick the same name, and a prune
+    // that runs next to another save could delete the patch that save just wrote.
+    const file = await withRepoLock('leftovers', async () => {
+      let patch = path.join(dir, `${base}.patch`);
+      for (let copy = 2; await exists(patch); copy++) patch = path.join(dir, `${base}-${copy}.patch`);
+      await fs.writeFile(patch, body, { flag: 'wx' });
+      await pruneLeftovers(patch);
+      return patch;
+    });
+    debugLog('workspace', 'saved leftovers', { desk, commits, files: uncommitted.length, bytes: body.length });
     return file;
   } finally {
     await removeDir(tmp).catch(() => undefined);
@@ -708,6 +730,12 @@ async function pruneLeftovers(keep: string) {
   }
 }
 
+/** The patches among `files` still there: a later save in the same sweep may have pruned an earlier one. */
+async function survivors(files: string[]): Promise<string[]> {
+  const there = await Promise.all(files.map(exists));
+  return files.filter((_file, index) => there[index]);
+}
+
 /**
  * Clean up after agents who left: their desks (work on no remote branch is saved as a patch first), stray folders in
  * the desks folder, and finished swarm/issue-* / qa/pr-* branches in the main checkout. Only touches what the office
@@ -762,6 +790,7 @@ export function sweepDesks(fullName: string, keep: SweepKeep): Promise<SweepResu
       const left = new Set((await g(['for-each-ref', '--format=%(refname)', 'refs/heads/swarm', 'refs/heads/qa'])).split(/\r?\n/));
       result.branches = doomed.filter((b) => !left.has(`refs/heads/${b}`)).length;
     }
+    result.patches = await survivors(result.patches);
     return result;
   });
 }
@@ -1040,11 +1069,12 @@ export async function removeMachine(machine: string): Promise<{ removed: boolean
   const dir = machineDir(machine);
   if (!(await exists(dir))) return { removed: true, patches: [] };
   if (await inUse(dir)) return { removed: false, patches: [] };
-  const patches: string[] = [];
+  const saved: string[] = [];
   for (const name of await fs.readdir(path.join(dir, 'work')).catch(() => [])) {
     const patch = await saveLeftovers(name.replace('__', '/'), path.join(dir, 'work', name), `machine-${machine}`).catch(() => null);
-    if (patch) patches.push(patch);
+    if (patch) saved.push(patch);
   }
+  const patches = await survivors(saved);
   try {
     await removeDir(dir);
     return { removed: true, patches };
