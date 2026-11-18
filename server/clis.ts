@@ -365,9 +365,17 @@ export function trustKey(screen: string): 'enter' | 'down' | null {
  * manager's call (once, in /hooks): the office moves to "Continue without trusting" (Down) and takes it (Enter).
  */
 export function hookReviewKey(screen: string): 'enter' | 'down' | null {
-  if (!/Hooks need review/i.test(screen)) return null;
-  const selected = screen.match(/^\s*[❯›]\s*(?:\d+\.\s*)?(.+)$/m)?.[1] ?? '';
+  const at = lastAt(screen, /Hooks need review/);
+  // The screen keeps earlier menus' rows: a trust question below the review is the live menu, and a trust question
+  // above it can still show a selection of its own.
+  if (at < 0 || lastAt(screen, TRUST_PROMPT) > at) return null;
+  const selected = [...screen.slice(at).matchAll(/^\s*[❯›]\s*(?:\d+\.\s*)?(.+)$/gm)].at(-1)?.[1] ?? '';
   return /^continue without trusting/i.test(selected.trim()) ? 'enter' : 'down';
+}
+
+/** Where the last match of `pattern` on screen starts, or -1. */
+function lastAt(screen: string, pattern: RegExp): number {
+  return [...screen.matchAll(new RegExp(pattern.source, 'gi'))].at(-1)?.index ?? -1;
 }
 
 /**

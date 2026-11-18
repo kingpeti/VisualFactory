@@ -91,17 +91,33 @@ describe('hookReviewKey', () => {
 
 describe('startupKey', () => {
   it('answers the hooks review before a trust question still on screen above it, never trusting all hooks', () => {
-    const screen = [
+    const screen = (selected: 2 | 3) => [
       'Do you trust the contents of this directory?',
       '› 1. Yes, continue',
       '  2. No, quit',
       '  Hooks need review',
       '  1. Review hooks',
-      '› 2. Trust all and continue',
-      "  3. Continue without trusting (hooks won't run)",
+      `${selected === 2 ? '›' : ' '} 2. Trust all and continue`,
+      `${selected === 3 ? '›' : ' '} 3. Continue without trusting (hooks won't run)`,
     ].join('\n');
-    expect(trustKey(screen)).toBe('enter'); // the live menu's "Trust all" reads as a yes to trustKey alone
-    expect(startupKey(screen)).toBe('down');
+    expect(trustKey(screen(2))).toBe('enter'); // the live menu's "Trust all" reads as a yes to trustKey alone
+    expect(startupKey(screen(2))).toBe('down');
+    expect(startupKey(screen(3))).toBe('enter');
+  });
+
+  it('answers a trust question below a hooks review left on screen', () => {
+    const screen = (selected: 'no' | 'yes') => [
+      '  Hooks need review',
+      '  1. Review hooks',
+      '  2. Trust all and continue',
+      "› 3. Continue without trusting (hooks won't run)",
+      'Quick safety check: Is this a project you created or one you trust?',
+      selected === 'no' ? '❯ No, exit' : '  No, exit',
+      selected === 'yes' ? '❯ Yes, I trust this folder' : '  Yes, I trust this folder',
+    ].join('\n');
+    expect(hookReviewKey(screen('yes'))).toBeNull();
+    expect(startupKey(screen('yes'))).toBe('enter');
+    expect(startupKey(screen('no'))).toBe('down');
   });
 
   it('answers a trust question when there is no hooks review', () => {
