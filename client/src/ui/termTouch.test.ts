@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nestedScroll, pastScrollThreshold, SCROLL_THRESHOLD_PX, touchScrollLines } from './termTouch';
+import { nestedScroll, pastScrollThreshold, SCROLL_THRESHOLD_PX, sidewaysDrag, touchScrollLines } from './termTouch';
 
 describe('pastScrollThreshold', () => {
   it('is false right at the threshold, true just past it', () => {
@@ -10,6 +10,20 @@ describe('pastScrollThreshold', () => {
   it('counts a diagonal move by its total distance', () => {
     expect(pastScrollThreshold(6, 6)).toBe(true); // hypot ≈ 8.49
     expect(pastScrollThreshold(1, 1)).toBe(false);
+  });
+});
+
+describe('sidewaysDrag', () => {
+  it('is true for a sideways drag and false for a vertical one, either way round', () => {
+    expect(sidewaysDrag(20, 0)).toBe(true);
+    expect(sidewaysDrag(-20, 3)).toBe(true);
+    expect(sidewaysDrag(0, 20)).toBe(false);
+    expect(sidewaysDrag(3, -20)).toBe(false);
+  });
+
+  it('leaves a 45-degree drag to the browser', () => {
+    expect(sidewaysDrag(6, 6)).toBe(true);
+    expect(sidewaysDrag(-6, 6)).toBe(true);
   });
 });
 

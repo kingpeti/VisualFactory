@@ -28,6 +28,11 @@ export function pastScrollThreshold(dx: number, dy: number, thresholdPx = SCROLL
   return Math.hypot(dx, dy) > thresholdPx;
 }
 
+/** Whether a drag is at least as sideways as it is vertical: a read-only tile leaves those to the browser's pan-x. */
+export function sidewaysDrag(dx: number, dy: number): boolean {
+  return Math.abs(dx) >= Math.abs(dy);
+}
+
 export interface NestedScroll {
   /** Where the box's `scrollTop` goes. */
   scrollTop: number;

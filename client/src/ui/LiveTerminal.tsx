@@ -5,7 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import type { TermClientMessage, TermServerMessage } from '../../../shared/types';
 import { termMessage } from './termSend';
-import { nestedScroll, pastScrollThreshold, touchScrollLines } from './termTouch';
+import { nestedScroll, pastScrollThreshold, sidewaysDrag, touchScrollLines } from './termTouch';
 
 // An agent's real terminal: their CLI's screen streamed from the office (/ws/term), and what you type sent back to it.
 // Opening it late shows everything so far: the office keeps a copy of each agent's screen and scrollback.
@@ -162,10 +162,13 @@ export function LiveTerminal({ agentId, className, interactive = true }: { agent
         Array.from(event.touches).find((candidate) => candidate.identifier === touchId);
       if (!touch) return;
       if (!dragging) {
-        if (!pastScrollThreshold(touch.clientX - startX, touch.clientY - startY)) return;
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        if (!pastScrollThreshold(dx, dy)) return;
+        // A read-only tile's sideways drag is the browser's pan (pan-x): cancelling its first move would stop that pan.
+        if (!interactive && sidewaysDrag(dx, dy)) return endGesture();
         dragging = true;
       }
-      // Once the browser takes a sideways pan (a read-only tile's pan-x), the rest of the gesture can't be cancelled.
       if (event.cancelable) event.preventDefault();
       const deltaY = touch.clientY - lastY;
       lastY = touch.clientY;
