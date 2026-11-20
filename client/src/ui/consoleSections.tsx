@@ -105,17 +105,18 @@ export function CeoTab({ onOpenPhone }: { onOpenPhone?: () => void }) {
   if (!ceo) return <p className="muted">The corner office is empty.</p>;
   const working = ceo.status === 'working';
   const pending = pendingRequests(requests);
-  const send = (t: string) => {
-    if (!t.trim()) return;
+  const send = (draft: string) => {
+    const body = draft.trim();
+    if (!body) return;
     // Over the limit: refuse with the server's words and keep the draft (mic auto-send has already cleared the box).
-    const problem = messageProblem(t);
+    const problem = messageProblem(body);
     if (problem) {
-      setText(t);
+      setText(draft);
       useStore.getState().pushToast('error', problem);
       return;
     }
     setText('');
-    void attempt(() => api.messageCeo(t));
+    void attempt(() => api.messageCeo(body));
   };
   const decided = requests.filter((r) => r.status !== 'pending').slice(-6).reverse();
   return (
