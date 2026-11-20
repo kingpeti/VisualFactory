@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import type { TermClientMessage, TermServerMessage } from '../../../shared/types';
 import { termMessage } from './termSend';
+import { nestedScroll, pastScrollThreshold, sidewaysDrag, touchScrollLines } from './termTouch';
 
 // An agent's real terminal: their CLI's screen streamed from the office (/ws/term), and what you type sent back to it.
 // Opening it late shows everything so far: the office keeps a copy of each agent's screen and scrollback.
@@ -129,6 +130,88 @@ export function LiveTerminal({ agentId, className, interactive = true }: { agent
     ro.observe(el);
     void document.fonts?.ready.then(() => !closed && fitAndTell());
 
+    // Touch scrolling: xterm 6's viewport only answers the mouse wheel, so a one-finger drag is turned into
+    // scrollLines calls (normal buffer) or forwarded as wheel steps (alternate buffer, full-screen TUIs, which
+    // scroll themselves on a reported wheel event and have no scrollback of their own). A read-only tile scrolls
+    // only locally: its box first, then its scrollback, and nothing goes on the socket.
+    let touchId: number | null = null;
+    let startX = 0;
+    let startY = 0;
+    let lastY = 0;
+    let dragging = false;
+    let carryPx = 0;
+    let scrolledLines = 0; // this gesture's, logged once when it ends
+    const lineHeightPx = () => {
+      const screen = el.querySelector('.xterm-screen') as HTMLElement | null;
+      return screen && term.rows > 0 ? screen.clientHeight / term.rows : 0;
+    };
+    const onTouchStart = (event: TouchEvent) => {
+      // A second finger is a pinch: drop the drag, so its moves neither scroll nor cancel the browser's zoom.
+      if (event.touches.length !== 1) return endGesture();
+      const touch = event.touches[0];
+      touchId = touch.identifier;
+      startX = touch.clientX;
+      startY = lastY = touch.clientY;
+      dragging = false;
+      carryPx = 0;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (touchId === null) return;
+      const touch =
+        Array.from(event.changedTouches).find((candidate) => candidate.identifier === touchId) ??
+        Array.from(event.touches).find((candidate) => candidate.identifier === touchId);
+      if (!touch) return;
+      if (!dragging) {
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        if (!pastScrollThreshold(dx, dy)) return;
+        // A read-only tile's sideways drag is the browser's pan (pan-x): cancelling its first move would stop that pan.
+        if (!interactive && sidewaysDrag(dx, dy)) return endGesture();
+        dragging = true;
+      }
+      if (event.cancelable) event.preventDefault();
+      const deltaY = touch.clientY - lastY;
+      lastY = touch.clientY;
+      let restPx = deltaY;
+      if (!interactive) {
+        // A read-only tile keeps the agent's own size, which can be taller than the tile: its box scrolls first.
+        const box = nestedScroll(deltaY, el.scrollTop, el.scrollHeight - el.clientHeight);
+        el.scrollTop = box.scrollTop;
+        restPx = box.restPx;
+      }
+      if (term.buffer.active.type === 'alternate') {
+        // The app in the alt buffer scrolls itself on a wheel event xterm reports to it; dragging down pans the
+        // same way a scrollback drag would (earlier output/up), so it gets the opposite sign of a drag down.
+        // A read-only tile's report could never reach the app (it sends nothing), so it gets none.
+        if (interactive) term.element?.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaY: -deltaY,
+            deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        return;
+      }
+      const step = touchScrollLines(restPx, carryPx, lineHeightPx());
+      carryPx = step.carryPx;
+      if (step.lines !== 0) term.scrollLines(-step.lines);
+      scrolledLines += step.lines;
+    };
+    const endGesture = () => {
+      if (dragging) console.debug('[termTouch] scroll', { lines: scrolledLines, buffer: term.buffer.active.type });
+      scrolledLines = 0;
+      touchId = null;
+      dragging = false;
+      carryPx = 0;
+    };
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', endGesture, { passive: true });
+    el.addEventListener('touchcancel', endGesture, { passive: true });
+
     return () => {
       closed = true;
       clearTimeout(retry);
@@ -136,6 +219,10 @@ export function LiveTerminal({ agentId, className, interactive = true }: { agent
       ro.disconnect();
       input.dispose();
       el.removeEventListener('keydown', onKey);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', endGesture);
+      el.removeEventListener('touchcancel', endGesture);
       ws?.close();
       term.dispose();
     };

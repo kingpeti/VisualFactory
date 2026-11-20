@@ -143,12 +143,12 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
 
 ### Phase 3: Reliability and UX quick wins (M1b, PR 3)
 
-- [ ] Task 9: Answer the live trust menu. (depends on 1) (#7)
+- [x] Task 9: Answer the live trust menu. (depends on 1) (#7)
   `git cherry-pick -x 79caf97 68a8ac6` from konstantinknappe-hash/cubefarm (`server/clis.ts` `trustKey` reads the
   last trust marker, `server/clis.test.ts` +2 cases; verified clean on 157efde).
   Logging: `debugLog('trust', 'answered trust prompt', { cli, key })` where `cliRunner.ts` answers it.
 
-- [ ] Task 10: Save a desk's unfinished work before reuse, with pruning. (depends on 1) (#8)
+- [x] Task 10: Save a desk's unfinished work before reuse, with pruning. (depends on 1) (#8)
   `git cherry-pick -x 4d56b71` from mysteryreloaded (`server/workspace.ts` `saveBeforeReuse`,
   `server/workspace.test.ts`; verified clean). Adapt in `server/workspace.ts`: skip desks whose branch starts with
   `swarm-preview` (preview restarts must not write patches); prune `<SWARM_HOME>/leftovers` at save time, oldest
@@ -158,14 +158,14 @@ generous caps in zod; user-facing limits stay in Swarm. Moving the helper to `se
   Logging: `debugLog('workspace', 'saved leftovers', { desk, files, bytes })`, `debugLog('workspace', 'pruned', { removed, bytes })`,
   `console.warn` when saving fails (the save must never block the desk).
 
-- [ ] Task 11: Touch-scroll an agent's live terminal on phones. (depends on 5, 7) (#9)
+- [x] Task 11: Touch-scroll an agent's live terminal on phones. (depends on 5, 7) (#9)
   `git cherry-pick -x 2d5b0ea` from mysteryreloaded (`client/src/ui/termTouch.ts` + test, `LiveTerminal.tsx`,
   `styles.css`, `e2e/terminalTouch.spec.ts`), then apply only the `client/src/ui/LiveTerminal.tsx` hunk of 37d6148
   (`git show 37d6148 -- client/src/ui/LiveTerminal.tsx | git apply`); never 37d6148 whole (it adds a stray demo
   state file). Check it works together with task 7's read-only tiles (scrolling allowed, no resize/keys).
   Logging: `console.debug('[termTouch] scroll', { lines })` throttled to once per gesture.
 
-- [ ] Task 12: Typed messages up to 60,000 characters. (depends on 1) (#10)
+- [x] Task 12: Typed messages up to 60,000 characters. (depends on 1) (#10)
   `git cherry-pick -n 4286dec` from mysteryreloaded; in `client/src/ui/MessageBox.tsx` keep upstream's imports and
   add only `import { MESSAGE_MAX } from '../../../shared/message';` (drop the fork's `useTouch`). Keep
   `maxLength={MESSAGE_MAX}`. In `server/swarm.ts` `message()`, a typed message is refused only when empty; longer

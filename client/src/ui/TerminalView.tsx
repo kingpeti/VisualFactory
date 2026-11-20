@@ -5,6 +5,7 @@ import { AgentSetup } from './AgentSettings';
 import { confirmDialog } from './Confirm';
 import { LiveTerminal } from './LiveTerminal';
 import { effectiveModel } from '../../../shared/models';
+import { messageProblem } from '../../../shared/message';
 import { assignChoices } from '../pocket/pocketData';
 import { agentLabel, signInFor, workerCli } from './floorRows';
 import { MessageBox } from './MessageBox';
@@ -133,6 +134,13 @@ export function TerminalView({
   const send = (t: string) => {
     const body = t.trim();
     if (!body) return;
+    // Over the limit: refuse with the server's words and keep the draft (mic auto-send has already cleared the box).
+    const problem = messageProblem(body);
+    if (problem) {
+      setText(t);
+      useStore.getState().pushToast('error', problem);
+      return;
+    }
     setText('');
     void run(() => api.message(agent.id, body));
   };

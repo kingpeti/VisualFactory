@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { boxVersions, CODEX_HOOK_EVENTS, codexHookCommand, CROSS_TURN_TOOLS, hookReviewKey, interruptions, launchArgs, localUrl, oneAtATime, signedOutScreen, trustKey, unwrapCmdShim, type LaunchContext } from './clis.ts';
+import { boxVersions, CODEX_HOOK_EVENTS, codexHookCommand, CROSS_TURN_TOOLS, hookReviewKey, interruptions, launchArgs, localUrl, oneAtATime, signedOutScreen, startupKey, trustKey, unwrapCmdShim, type LaunchContext } from './clis.ts';
 import { LOCAL_PROVIDERS } from '../shared/models.ts';
 import { describeOfficeTool, describeTool, newScreenshots, screenshotFile, summariseResult } from './agentRunner.ts';
 
@@ -51,6 +51,28 @@ describe('trustKey', () => {
     expect(trustKey(screen)).toBe('enter');
   });
 
+  it("reads Claude Code's selection, not a previous Codex session's prompt above the question", () => {
+    const screen = [
+      '› Ask Codex to do anything',
+      '── Codex session ended ──',
+      'Accessing workspace:',
+      'Quick safety check: Is this a project you created or one you trust?',
+      '❯ No, exit',
+      '  Yes, I trust this folder',
+    ].join('\n');
+    expect(trustKey(screen)).toBe('down');
+  });
+
+  it('reads the last trust question when an earlier one is still on screen', () => {
+    const question = (selected: 'no' | 'yes') =>
+      [
+        'Quick safety check: Is this a project you created or one you trust?',
+        selected === 'no' ? '❯ No, exit' : '  No, exit',
+        selected === 'yes' ? '❯ Yes, I trust this folder' : '  Yes, I trust this folder',
+      ].join('\n');
+    expect(trustKey([question('no'), '(the office restarted)', question('yes')].join('\n'))).toBe('enter');
+  });
+
   it('leaves every other screen alone', () => {
     expect(trustKey('❯ Try "refactor <filepath>"')).toBeNull();
   });
@@ -64,6 +86,43 @@ describe('hookReviewKey', () => {
     expect(hookReviewKey(review(1))).toBe('down');
     expect(hookReviewKey(review(3))).toBe('enter');
     expect(hookReviewKey('› Ask Codex to do anything')).toBeNull();
+  });
+});
+
+describe('startupKey', () => {
+  it('answers the hooks review before a trust question still on screen above it, never trusting all hooks', () => {
+    const screen = (selected: 2 | 3) => [
+      'Do you trust the contents of this directory?',
+      '› 1. Yes, continue',
+      '  2. No, quit',
+      '  Hooks need review',
+      '  1. Review hooks',
+      `${selected === 2 ? '›' : ' '} 2. Trust all and continue`,
+      `${selected === 3 ? '›' : ' '} 3. Continue without trusting (hooks won't run)`,
+    ].join('\n');
+    expect(trustKey(screen(2))).toBe('enter'); // the live menu's "Trust all" reads as a yes to trustKey alone
+    expect(startupKey(screen(2))).toBe('down');
+    expect(startupKey(screen(3))).toBe('enter');
+  });
+
+  it('answers a trust question below a hooks review left on screen', () => {
+    const screen = (selected: 'no' | 'yes') => [
+      '  Hooks need review',
+      '  1. Review hooks',
+      '  2. Trust all and continue',
+      "› 3. Continue without trusting (hooks won't run)",
+      'Quick safety check: Is this a project you created or one you trust?',
+      selected === 'no' ? '❯ No, exit' : '  No, exit',
+      selected === 'yes' ? '❯ Yes, I trust this folder' : '  Yes, I trust this folder',
+    ].join('\n');
+    expect(hookReviewKey(screen('yes'))).toBeNull();
+    expect(startupKey(screen('yes'))).toBe('enter');
+    expect(startupKey(screen('no'))).toBe('down');
+  });
+
+  it('answers a trust question when there is no hooks review', () => {
+    expect(startupKey(['Quick safety check: Is this a project you created or one you trust?', '❯ No, exit', '  Yes, I trust this folder'].join('\n'))).toBe('down');
+    expect(startupKey('❯ Try "refactor <filepath>"')).toBeNull();
   });
 });
 

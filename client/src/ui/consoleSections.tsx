@@ -7,6 +7,7 @@ import { api } from '../api';
 import { PreviewPill, PreviewSettings } from './AppViewer';
 import { agentsOnRepo, pendingRequests, useStore, type Agent } from '../store';
 import { CEO_ID, DEFAULT_MAX_AGENTS, FLOOR_SEATS, type AgentCli, type EffortLevel, type OfficeUpdateView, type RepoView } from '../../../shared/types';
+import { messageProblem } from '../../../shared/message';
 import { CLAUDE_MODELS, modelSuggestions } from '../../../shared/models';
 import { CliOptions, CliSelect, cliName, EFFORTS, EffortSelect, LookSelect, ModelInput, NameInput, PromptPreview } from './AgentSettings';
 import { canPostpone, canUpdateNow, drainDeadline, officeUpdateText } from '../officeUpdate';
@@ -104,10 +105,18 @@ export function CeoTab({ onOpenPhone }: { onOpenPhone?: () => void }) {
   if (!ceo) return <p className="muted">The corner office is empty.</p>;
   const working = ceo.status === 'working';
   const pending = pendingRequests(requests);
-  const send = (t: string) => {
-    if (!t.trim()) return;
+  const send = (draft: string) => {
+    const body = draft.trim();
+    if (!body) return;
+    // Over the limit: refuse with the server's words and keep the draft (mic auto-send has already cleared the box).
+    const problem = messageProblem(body);
+    if (problem) {
+      setText(draft);
+      useStore.getState().pushToast('error', problem);
+      return;
+    }
     setText('');
-    void attempt(() => api.messageCeo(t));
+    void attempt(() => api.messageCeo(body));
   };
   const decided = requests.filter((r) => r.status !== 'pending').slice(-6).reverse();
   return (

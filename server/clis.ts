@@ -350,8 +350,11 @@ const TRUST_PROMPT = /Quick safety check|Do you trust the (files|contents) (in|o
  * question on screen.
  */
 export function trustKey(screen: string): 'enter' | 'down' | null {
-  if (!TRUST_PROMPT.test(screen)) return null;
-  const selected = screen.match(/^\s*[❯›]\s*(?:\d+\.\s*)?(.+)$/m)?.[1] ?? '';
+  const at = screen.search(TRUST_PROMPT);
+  if (at < 0) return null;
+  // The live menu is the last selection on screen: above it can be a previous session's prompt (Codex's "› …") or
+  // the same question as it stood before the office restarted.
+  const selected = [...screen.slice(at).matchAll(/^\s*[❯›]\s*(?:\d+\.\s*)?(.+)$/gm)].at(-1)?.[1] ?? '';
   if (/^(yes|trust|continue|proceed)\b/i.test(selected.trim())) return 'enter';
   if (/^(no|exit|quit|cancel)\b/i.test(selected.trim())) return 'down';
   return null;
@@ -362,9 +365,25 @@ export function trustKey(screen: string): 'enter' | 'down' | null {
  * manager's call (once, in /hooks): the office moves to "Continue without trusting" (Down) and takes it (Enter).
  */
 export function hookReviewKey(screen: string): 'enter' | 'down' | null {
-  if (!/Hooks need review/i.test(screen)) return null;
-  const selected = screen.match(/^\s*[❯›]\s*(?:\d+\.\s*)?(.+)$/m)?.[1] ?? '';
+  const at = lastAt(screen, /Hooks need review/);
+  // The screen keeps earlier menus' rows: a trust question below the review is the live menu, and a trust question
+  // above it can still show a selection of its own.
+  if (at < 0 || lastAt(screen, TRUST_PROMPT) > at) return null;
+  const selected = [...screen.slice(at).matchAll(/^\s*[❯›]\s*(?:\d+\.\s*)?(.+)$/gm)].at(-1)?.[1] ?? '';
   return /^continue without trusting/i.test(selected.trim()) ? 'enter' : 'down';
+}
+
+/** Where the last match of `pattern` on screen starts, or -1. */
+function lastAt(screen: string, pattern: RegExp): number {
+  return [...screen.matchAll(new RegExp(pattern.source, 'gi'))].at(-1)?.index ?? -1;
+}
+
+/**
+ * The key for a CLI's start-up menu: the hooks review first, then the folder-trust question. Never the other way
+ * round: a trust question still on screen above the review would let trustKey take its "Trust all" option for a yes.
+ */
+export function startupKey(screen: string): 'enter' | 'down' | null {
+  return hookReviewKey(screen) ?? trustKey(screen);
 }
 
 /**

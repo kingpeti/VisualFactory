@@ -12,6 +12,7 @@ import { isKey } from './controls';
 import { Key } from './Key';
 import { replayKind } from './voiceQueue';
 import { CLAUDE_MODELS, effectiveModel, modelSuggestions } from '../../../shared/models';
+import { messageProblem } from '../../../shared/message';
 
 // The manager's phone: text the CEO, decide on team changes, see the whole company at a glance
 // without walking anywhere, and play a game while the team works. Press P anywhere in the office.
@@ -374,6 +375,13 @@ export function Chat({ autoFocus = true }: { autoFocus?: boolean }) {
   const send = (t: string) => {
     const body = t.trim();
     if (!body) return;
+    // Over the limit: refuse with the server's words and keep the draft (mic auto-send has already cleared the box).
+    const problem = messageProblem(body);
+    if (problem) {
+      setText(t);
+      useStore.getState().pushToast('error', problem);
+      return;
+    }
     setText('');
     void attempt(() => api.messageCeo(body));
   };
