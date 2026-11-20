@@ -569,6 +569,44 @@ async function inUse(dir: string) {
   return false;
 }
 
+/** The paths in `git diff --name-status --no-renames -z` output: each entry starts with its status, so exec's trim of
+ * stdout can't take a leading space off the first path, as it would with `--name-only`. */
+const statusPaths = (output: string) => output.split('\0').filter((_field, index) => index % 2 === 1);
+
+/** `paths`, each once, without those under another of them: a path's pathspec takes in what's under it (a file where
+ * a folder was, or the reverse), and the same change in two chunks' diffs would make the patch fail to apply. */
+export function topmostPaths(paths: string[]): string[] {
+  const listed = new Set(paths);
+  return [...listed].filter((file) => !file.split('/').some((_part, depth, parts) => depth > 0 && listed.has(parts.slice(0, depth).join('/'))));
+}
+
+/** The share of Windows' 32,767-character command line a run of path arguments may take, leaving git's own path and
+ * options room. */
+const COMMAND_ARGS_BUDGET = 16_000;
+
+/**
+ * `groups` (each one path's arguments, kept together) joined into runs whose arguments stay within `budget`
+ * characters, a space and quotes counted per argument: a fixed count of paths can pass the limit when they are long.
+ * A group over the budget on its own still gets a run.
+ */
+export function byCommandLength(groups: string[][], budget = COMMAND_ARGS_BUDGET): string[][] {
+  const runs: string[][] = [];
+  let run: string[] = [];
+  let used = 0;
+  for (const group of groups) {
+    const size = group.reduce((total, arg) => total + arg.length + 3, 0);
+    if (run.length && used + size > budget) {
+      runs.push(run);
+      run = [];
+      used = 0;
+    }
+    run.push(...group);
+    used += size;
+  }
+  if (run.length) runs.push(run);
+  return runs;
+}
+
 const stamp = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 
 /**
@@ -588,7 +626,7 @@ async function saveLeftovers(fullName: string, desk: string, label = path.basena
   // name. No renames, so a staged rename's old path is listed (deleted) too.
   const status = (await g(['status', '--porcelain=v2', '-z', '--untracked-files=all', '--no-renames'])).split('\0');
   const dirty = status.some((entry) => /^[1u] /.test(entry));
-  const edited = dirty ? (await g(['diff', 'HEAD', '--name-status', '--no-renames', '-z'])).split('\0').filter((_field, index) => index % 2 === 1) : [];
+  const edited = dirty ? statusPaths(await g(['diff', 'HEAD', '--name-status', '--no-renames', '-z'])) : [];
   // Untracked files that the project's .gitignore does not cover (ignored ones, like node_modules, stay out).
   const untracked = status.filter((entry) => entry.startsWith('? ')).map((entry) => entry.slice(2));
   const big = new Set(await oversized(desk, [...edited, ...untracked]));
@@ -608,14 +646,13 @@ async function saveLeftovers(fullName: string, desk: string, label = path.basena
   await fs.mkdir(dir, { recursive: true });
   const tmp = await fs.mkdtemp(path.join(dir, '.tmp-'));
   try {
-    // New files are intent-to-added (index entry, no content) so `git diff HEAD` lists them as new files. Chunked,
-    // like the branch sweeps: a few hundred new files would exceed Windows' 32,767-character command line. A chunk
-    // git refuses is retried a file at a time, and only the files it still refuses stay out: the commits and edits
-    // are saved whatever happens here. Literal pathspecs: a name like `:x` or `[ab].txt` is a file, not magic or a
-    // glob.
+    // New files are intent-to-added (index entry, no content) so `git diff HEAD` lists them as new files. Chunked by
+    // length (byCommandLength): a few hundred new files, or fewer long paths, would exceed Windows' 32,767-character
+    // command line. A chunk git refuses is retried a file at a time, and only the files it still refuses stay out: the
+    // commits and edits are saved whatever happens here. Literal pathspecs: a name like `:x` or `[ab].txt` is a file,
+    // not magic or a glob.
     const refused: string[] = [];
-    for (let i = 0; i < added.length; i += 100) {
-      const chunk = added.slice(i, i + 100);
+    for (const chunk of byCommandLength(added.map((file) => [file]))) {
       if (await g(['--literal-pathspecs', 'add', '-N', '--', ...chunk]).then(() => true, () => false)) continue;
       for (const file of chunk) await g(['--literal-pathspecs', 'add', '-N', '--', file]).catch(() => refused.push(file));
     }
@@ -626,16 +663,20 @@ async function saveLeftovers(fullName: string, desk: string, label = path.basena
     // Written to files, not read from stdout: exec trims it, and a patch's trailing whitespace matters.
     if (commits && Number(await g(['rev-list', '--count', '--merges', 'HEAD', '--not', '--remotes']))) {
       // format-patch leaves merges out, and with them a conflict's resolution: each commit as its diff from its first
-      // parent instead.
-      await g(['log', '--reverse', '-p', '--binary', '--no-ext-diff', '--no-textconv', '--no-color', '-m', '--first-parent', '--format=email', `--output=${path.join(tmp, '0000-unpushed.patch')}`, 'HEAD', '--not', '--remotes']);
+      // parent instead. -m follows log.diffMerges (git 2.31+), which the manager's config may turn off: pinned here,
+      // and a git older than that ignores the key.
+      await g(['-c', 'log.diffMerges=first-parent', 'log', '--reverse', '-p', '--binary', '--no-ext-diff', '--no-textconv', '--no-color', '-m', '--first-parent', '--format=email', `--output=${path.join(tmp, '0000-unpushed.patch')}`, 'HEAD', '--not', '--remotes']);
     } else if (commits) {
       await g(['format-patch', '-q', '-o', tmp, 'HEAD', '--not', '--remotes']);
     }
-    // The uncommitted files by name, in chunks for the command line like `add -N` above.
-    const uncommitted = [...edits, ...added.filter((file) => !refused.includes(file))];
-    for (let i = 0; i < uncommitted.length; i += 100) {
-      const output = path.join(tmp, `zz-uncommitted-${String(i).padStart(6, '0')}.patch`);
-      await g(['--literal-pathspecs', 'diff', 'HEAD', '--no-renames', '--binary', `--output=${output}`, '--', ...uncommitted.slice(i, i + 100)]);
+    // The uncommitted files by name, each once, in chunks for the command line like `add -N` above. A path takes in
+    // what's under it (a file where a folder was, or the reverse): that isn't listed again, and an oversized file under
+    // it is excluded, in the same chunk. Each name `:(literal)`, as `--literal-pathspecs` would turn exclude off too.
+    const uncommitted = topmostPaths([...edits, ...added.filter((file) => !refused.includes(file))]);
+    const pathspecs = uncommitted.map((file) => [`:(literal)${file}`, ...[...big].filter((oversize) => oversize.startsWith(`${file}/`)).map((oversize) => `:(exclude,literal)${oversize}`)]);
+    for (const [index, chunk] of byCommandLength(pathspecs).entries()) {
+      const output = path.join(tmp, `zz-uncommitted-${String(index).padStart(6, '0')}.patch`);
+      await g(['diff', 'HEAD', '--no-renames', '--binary', `--output=${output}`, '--', ...chunk]);
     }
     const parts = (await fs.readdir(tmp)).sort();
     const body = Buffer.concat(await Promise.all(parts.map((part) => fs.readFile(path.join(tmp, part)))));
@@ -650,7 +691,7 @@ async function saveLeftovers(fullName: string, desk: string, label = path.basena
       await pruneLeftovers(patch);
       return patch;
     });
-    debugLog('workspace', 'saved leftovers', { desk, commits, files: uncommitted.length, bytes: body.length });
+    debugLog('workspace', 'saved leftovers', { desk, commits, files: edits.length + added.length - refused.length, bytes: body.length });
     return file;
   } finally {
     await removeDir(tmp).catch(() => undefined);
@@ -667,9 +708,8 @@ async function alreadyMerged(g: (args: string[]) => Promise<string>, baseRef: st
   if (tree) return tree === (await g(['rev-parse', `${baseRef}^{tree}`]).catch(() => '')).trim();
   const forkPoint = (await g(['merge-base', baseRef, 'HEAD']).catch(() => '')).trim();
   if (!forkPoint) return false;
-  const names = (output: string) => output.split('\0').filter(Boolean);
-  const changed = names(await g(['diff', '--name-only', '--no-renames', '-z', forkPoint, 'HEAD']));
-  const differ = new Set(names(await g(['diff', '--name-only', '--no-renames', '-z', baseRef, 'HEAD'])));
+  const changed = statusPaths(await g(['diff', '--name-status', '--no-renames', '-z', forkPoint, 'HEAD']));
+  const differ = new Set(statusPaths(await g(['diff', '--name-status', '--no-renames', '-z', baseRef, 'HEAD'])));
   return changed.length > 0 && !changed.some((file) => differ.has(file));
 }
 

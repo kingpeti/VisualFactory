@@ -35,7 +35,7 @@ process.env.GIT_CONFIG_GLOBAL = gitConfig;
 
 const { git } = await import('./exec.ts');
 const { HOME_DIR, WORKSPACE_ROOT } = await import('./config.ts');
-const { branchHolder, deskDir, fileList, leftoversInDesk, leftoversToPrune, listMachines, machineDesk, mainDir, overwrittenPaths, parseWorktrees, planSweep, porcelainPaths, prepareDesk, prepareMachineDesk, removeDesk, removeMachine, setLocalPath, sweepDesks, sweepMachine, syncMain: sync, trimDesk } =
+const { branchHolder, byCommandLength, topmostPaths, deskDir, fileList, leftoversInDesk, leftoversToPrune, listMachines, machineDesk, mainDir, overwrittenPaths, parseWorktrees, planSweep, porcelainPaths, prepareDesk, prepareMachineDesk, removeDesk, removeMachine, setLocalPath, sweepDesks, sweepMachine, syncMain: sync, trimDesk } =
   await import('./workspace.ts');
 // Most tests only care about the status line.
 const syncMain = async (...args: Parameters<typeof sync>) => (await sync(...args))?.status ?? null;
@@ -554,6 +554,8 @@ describe('prepareDesk', { timeout: 60_000 }, () => {
     await fs.writeFile(path.join(desk, 'notes.txt'), 'resolved by hand\n');
     await git(['add', 'notes.txt'], { cwd: desk });
     await git(['commit', '-q', '--no-edit'], { cwd: desk });
+    // The manager's config may turn merge diffs off: the resolution must be saved even so.
+    await git(['config', 'log.diffMerges', 'off'], { cwd: desk });
     const notes: string[] = [];
     expect(await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'mia-6d1e', 'swarm/issue-22-mia', (text) => notes.push(text))).toBe(desk);
     const patch = await savedPatch(repos.fullName, 'swarm-issue-21-mia');
@@ -584,6 +586,43 @@ describe('prepareDesk', { timeout: 60_000 }, () => {
     if (process.platform !== 'win32') expect(text).toContain('pathspec magic');
     expect(text).toMatch(/diff --git a\/package\.json b\/package\.json\ndeleted file mode/);
     expect(text).toMatch(/diff --git a\/pkg\.json b\/pkg\.json\nnew file mode/);
+  });
+
+  it('saves a folder that became a file with each deletion once, in a patch that applies', async () => {
+    const repos = await makeRepos();
+    // The new file pkg takes in every one of the 101 deleted files (topmostPaths keeps them from being listed again).
+    await fs.mkdir(path.join(repos.upstream, 'pkg'));
+    for (let index = 0; index <= 100; index++) await fs.writeFile(path.join(repos.upstream, 'pkg', `f-${String(index).padStart(3, '0')}.txt`), `file ${index}\n`);
+    await git(['add', 'pkg'], { cwd: repos.upstream });
+    await git(['commit', '-q', '-m', 'add pkg'], { cwd: repos.upstream });
+    await git(['push', '-q', 'origin', 'main'], { cwd: repos.upstream });
+    const desk = await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'zora-5e2f', 'swarm/issue-40-zora');
+    await fs.rm(path.join(desk, 'pkg'), { recursive: true });
+    await fs.writeFile(path.join(desk, 'pkg'), 'a file now\n');
+    expect(await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'zora-5e2f', 'swarm/issue-41-zora')).toBe(desk);
+    const patch = await savedPatch(repos.fullName, 'swarm-issue-40-zora');
+    expect((await fs.readFile(patch, 'utf8')).match(/^deleted file mode/gm)).toHaveLength(101);
+    await git(['apply', patch], { cwd: repos.upstream });
+    expect((await fs.readFile(path.join(repos.upstream, 'pkg'), 'utf8')).replaceAll('\r\n', '\n')).toBe('a file now\n');
+  });
+
+  it('leaves a staged file over 25 MB out when a file became the folder it is in', async () => {
+    const repos = await makeRepos();
+    await commitFile(repos.upstream, 'pkg', 'a file\n');
+    await git(['push', '-q', 'origin', 'main'], { cwd: repos.upstream });
+    const desk = await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'tomi-8a3c', 'swarm/issue-42-tomi');
+    await fs.rm(path.join(desk, 'pkg'));
+    await fs.mkdir(path.join(desk, 'pkg'));
+    await fs.writeFile(path.join(desk, 'pkg', 'huge.bin'), Buffer.alloc(26 * 1024 * 1024, 1));
+    await fs.writeFile(path.join(desk, 'pkg', 'small.txt'), 'a small file\n');
+    await git(['add', '-A', 'pkg'], { cwd: desk });
+    const notes: string[] = [];
+    expect(await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'tomi-8a3c', 'swarm/issue-43-tomi', (text) => notes.push(text))).toBe(desk);
+    const patch = await savedPatch(repos.fullName, 'swarm-issue-42-tomi');
+    expect(notes).toEqual(['Left 1 file over 25 MB out of the saved work: pkg/huge.bin.', `Saved unfinished work from swarm/issue-42-tomi to ${patch}.`]);
+    const text = await fs.readFile(patch, 'utf8');
+    expect(text).toContain('a small file');
+    expect(text).not.toContain('huge.bin');
   });
 
   it('leaves a file over 25 MB out of the saved patch, and names it', async () => {
@@ -671,6 +710,25 @@ describe('prepareDesk', { timeout: 60_000 }, () => {
     expect(text).not.toContain('feature.txt');
   });
 
+  it('saves an unmerged commit to a name with a leading space, when a conflict leaves the squash check to its fallback', async () => {
+    const repos = await makeRepos();
+    await commitFile(repos.upstream, '  earlier.txt', 'base\n');
+    await commitFile(repos.upstream, ' lead.txt', 'base\n');
+    await git(['push', '-q', 'origin', 'main'], { cwd: repos.upstream });
+    const desk = await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'ivy-4d2e', 'swarm/issue-60-ivy');
+    await commitFile(desk, ' lead.txt', 'from the branch\n');
+    // Main changes the same file another way, so merge-tree can't merge them, and one that sorts before it: the first
+    // name of each file list would lose its leading spaces to exec's trim.
+    await commitFile(repos.upstream, '  earlier.txt', 'from main\n');
+    await commitFile(repos.upstream, ' lead.txt', 'from main\n');
+    await git(['push', '-q', 'origin', 'main'], { cwd: repos.upstream });
+    const notes: string[] = [];
+    expect(await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'ivy-4d2e', 'swarm/issue-61-ivy', (text) => notes.push(text))).toBe(desk);
+    const patch = await savedPatch(repos.fullName, 'swarm-issue-60-ivy');
+    expect(notes).toEqual([`Saved unfinished work from swarm/issue-60-ivy to ${patch}.`]);
+    expect(await fs.readFile(patch, 'utf8')).toContain('from the branch');
+  });
+
   it('clears a stale index.lock before saving, so the save succeeds and keeps the new file', async () => {
     const r = await makeRepos();
     const desk = await prepareDesk(r.fullName, { defaultBranch: 'main' }, 'gina-77d0', 'swarm/issue-12-gina');
@@ -730,6 +788,35 @@ describe('leftoversToPrune', () => {
 
   it("never prunes the patch just saved, and one over the cap alone doesn't push the others out", () => {
     expect(leftoversToPrune([patch('new', 500, 0), patch('b', 60, 1), patch('c', 60, 2)], now, 'new', 30 * day, 100)).toEqual(['c']);
+  });
+});
+
+describe('byCommandLength', () => {
+  const cost = (run: string[]) => run.reduce((total, arg) => total + arg.length + 3, 0);
+
+  it('splits 100 long paths that would pass the Windows command line into runs within the budget, in order', () => {
+    const paths = Array.from({ length: 100 }, (_unused, index) => `${'deep/'.repeat(70)}file-${index}.txt`);
+    expect(paths.join(' ').length).toBeGreaterThan(32_767);
+    const runs = byCommandLength(paths.map((file) => [file]));
+    expect(runs.length).toBeGreaterThan(1);
+    for (const run of runs) expect(cost(run)).toBeLessThanOrEqual(16_000);
+    expect(runs.flat()).toEqual(paths);
+  });
+
+  it("keeps a path's excludes in its run, and gives a path over the budget a run of its own", () => {
+    const runs = byCommandLength([['a', 'b'], ['c'.repeat(50)], ['d', 'e']], 40);
+    expect(runs).toEqual([['a', 'b'], ['c'.repeat(50)], ['d', 'e']]);
+    expect(byCommandLength([])).toEqual([]);
+  });
+});
+
+describe('topmostPaths', () => {
+  it("drops paths under another listed one, and repeats, but keeps a sibling that only shares a prefix", () => {
+    expect(topmostPaths(['pkg/a.txt', 'pkg', 'pkg/deep/b.txt', 'pkgx/c.txt', 'other.txt', 'other.txt'])).toEqual(['pkg', 'pkgx/c.txt', 'other.txt']);
+  });
+
+  it('keeps every path when none is under another', () => {
+    expect(topmostPaths(['a/b.txt', 'a/c.txt', ' lead.txt'])).toEqual(['a/b.txt', 'a/c.txt', ' lead.txt']);
   });
 });
 
@@ -1038,7 +1125,9 @@ describe("agents' machines", { timeout: 60_000 }, () => {
       await fs.writeFile(path.join(desk, 'notes.txt'), `unfinished on ${machine}\n`);
     }
     const notes: string[] = [];
-    await Promise.all(machines.map((machine) => prepareMachineDesk(machine, repos.fullName, { defaultBranch: 'main' }, `swarm/issue-31-${machine}`, (text) => notes.push(text))));
+    // One day for both saves: across midnight they would get different names, and no -2 would show they met.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 5, 15, 12) });
+    await Promise.all(machines.map((machine) => prepareMachineDesk(machine, repos.fullName, { defaultBranch: 'main' }, `swarm/issue-31-${machine}`, (text) => notes.push(text)))).finally(() => vi.useRealTimers());
     const patches = notes.map((text) => /^Saved unfinished work from swarm\/issue-30-ada to (.+)\.$/.exec(text)?.[1] ?? text).sort();
     expect(patches.map((file) => path.basename(file))).toEqual([expect.stringMatching(/^swarm-issue-30-ada-\d{8}-2\.patch$/), expect.stringMatching(/^swarm-issue-30-ada-\d{8}\.patch$/)]);
     const texts = await Promise.all(patches.map((file) => fs.readFile(file, 'utf8')));
