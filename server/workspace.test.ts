@@ -622,23 +622,28 @@ describe('prepareDesk', { timeout: 60_000 }, () => {
     expect((await fs.readFile(path.join(repos.upstream, 'pkg'), 'utf8')).replaceAll('\r\n', '\n')).toBe('a file now\n');
   });
 
-  it('leaves a staged file over 25 MB out when a file became the folder it is in', async () => {
+  it('leaves files over 25 MB out when a file became the folder they are in, and saves the rest in a patch that applies', async () => {
     const repos = await makeRepos();
     await commitFile(repos.upstream, 'pkg', 'a file\n');
     await git(['push', '-q', 'origin', 'main'], { cwd: repos.upstream });
     const desk = await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'tomi-8a3c', 'swarm/issue-42-tomi');
     await fs.rm(path.join(desk, 'pkg'));
     await fs.mkdir(path.join(desk, 'pkg'));
-    await fs.writeFile(path.join(desk, 'pkg', 'huge.bin'), Buffer.alloc(26 * 1024 * 1024, 1));
+    // Oversized files under the new folder, one staged and two not, next to a small one and an edit elsewhere.
+    for (const name of ['huge-1.bin', 'huge-2.bin', 'huge-3.bin']) await fs.writeFile(path.join(desk, 'pkg', name), Buffer.alloc(26 * 1024 * 1024, 1));
     await fs.writeFile(path.join(desk, 'pkg', 'small.txt'), 'a small file\n');
-    await git(['add', '-A', 'pkg'], { cwd: desk });
+    await git(['add', '--', 'pkg/huge-1.bin', 'pkg/small.txt'], { cwd: desk });
+    await fs.writeFile(path.join(desk, 'README.md'), '# Test\nan edit beside the folder\n');
     const notes: string[] = [];
     expect(await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'tomi-8a3c', 'swarm/issue-43-tomi', (text) => notes.push(text))).toBe(desk);
     const patch = await savedPatch(repos.fullName, 'swarm-issue-42-tomi');
-    expect(notes).toEqual(['Left 1 file over 25 MB out of the saved work: pkg/huge.bin.', `Saved unfinished work from swarm/issue-42-tomi to ${patch}.`]);
+    expect(notes).toEqual([expect.stringMatching(/^Left 3 files over 25 MB out of the saved work: /), `Saved unfinished work from swarm/issue-42-tomi to ${patch}.`]);
     const text = await fs.readFile(patch, 'utf8');
-    expect(text).toContain('a small file');
-    expect(text).not.toContain('huge.bin');
+    expect(text).not.toContain('huge-');
+    // Where the desk started: the file pkg goes, the small file comes in its folder, and the edit lands.
+    await git(['apply', patch], { cwd: repos.upstream });
+    expect((await fs.readFile(path.join(repos.upstream, 'pkg', 'small.txt'), 'utf8')).replaceAll('\r\n', '\n')).toBe('a small file\n');
+    expect((await fs.readFile(path.join(repos.upstream, 'README.md'), 'utf8')).replaceAll('\r\n', '\n')).toBe('# Test\nan edit beside the folder\n');
   });
 
   it('leaves a file over 25 MB out of the saved patch, and names it', async () => {
