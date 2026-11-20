@@ -573,11 +573,21 @@ async function inUse(dir: string) {
  * stdout can't take a leading space off the first path, as it would with `--name-only`. */
 const statusPaths = (output: string) => output.split('\0').filter((_field, index) => index % 2 === 1);
 
-/** `paths`, each once, without those under another of them: a path's pathspec takes in what's under it (a file where
- * a folder was, or the reverse), and the same change in two chunks' diffs would make the patch fail to apply. */
-export function topmostPaths(paths: string[]): string[] {
-  const listed = new Set(paths);
-  return [...listed].filter((file) => !file.split('/').some((_part, depth, parts) => depth > 0 && listed.has(parts.slice(0, depth).join('/'))));
+/**
+ * The pathspec runs for `git diff HEAD` over `paths`, each change once. A path's pathspec takes in what's under it (a
+ * file where a folder was, or the reverse), so a path with anything under it, among `paths` or the `left` out ones
+ * (oversized), gets a run of its own with all of that excluded (`P/` only matches inside P): two arguments however
+ * much is under it. What's under it comes in by name in the other runs, which go by length (byCommandLength).
+ */
+export function diffPathspecs(paths: string[], left: Iterable<string> = []): string[][] {
+  const unique = [...new Set(paths)];
+  const parents = new Set<string>();
+  for (const file of [...unique, ...left]) {
+    const parts = file.split('/');
+    for (let depth = 1; depth < parts.length; depth++) parents.add(parts.slice(0, depth).join('/'));
+  }
+  const own = unique.filter((file) => parents.has(file)).map((file) => [`:(literal)${file}`, `:(exclude,literal)${file}/`]);
+  return [...own, ...byCommandLength(unique.filter((file) => !parents.has(file)).map((file) => [`:(literal)${file}`]))];
 }
 
 /** The share of Windows' 32,767-character command line a run of path arguments may take, leaving git's own path and
@@ -660,34 +670,40 @@ async function saveLeftovers(fullName: string, desk: string, label = path.basena
       console.warn('[workspace] left new files git would not add out of the saved work', { desk, files: refused });
       note?.(`Left ${refused.length} new file${refused.length === 1 ? '' : 's'} git would not add out of the saved work: ${refused.slice(0, 3).join(', ')}${refused.length > 3 ? ` and ${refused.length - 3} more` : ''}.`);
     }
-    // Written to files, not read from stdout: exec trims it, and a patch's trailing whitespace matters.
+    // Written to files, not read from stdout: exec trims it, and a patch's trailing whitespace matters. `git log` and
+    // `git diff` (unlike format-patch) follow the manager's diff config: the real bytes, and the a/ b/ prefixes a plain
+    // `git apply` expects, whatever textconv drivers, external diffs, colours or diff.noprefix say.
+    const patchFormat = ['--binary', '--no-ext-diff', '--no-textconv', '--no-color', '--src-prefix=a/', '--dst-prefix=b/'];
     if (commits && Number(await g(['rev-list', '--count', '--merges', 'HEAD', '--not', '--remotes']))) {
       // format-patch leaves merges out, and with them a conflict's resolution: each commit as its diff from its first
       // parent instead. -m follows log.diffMerges (git 2.31+), which the manager's config may turn off: pinned here,
       // and a git older than that ignores the key.
-      await g(['-c', 'log.diffMerges=first-parent', 'log', '--reverse', '-p', '--binary', '--no-ext-diff', '--no-textconv', '--no-color', '-m', '--first-parent', '--format=email', `--output=${path.join(tmp, '0000-unpushed.patch')}`, 'HEAD', '--not', '--remotes']);
+      await g(['-c', 'log.diffMerges=first-parent', 'log', '--reverse', '-p', ...patchFormat, '-m', '--first-parent', '--format=email', `--output=${path.join(tmp, '0000-unpushed.patch')}`, 'HEAD', '--not', '--remotes']);
     } else if (commits) {
-      await g(['format-patch', '-q', '-o', tmp, 'HEAD', '--not', '--remotes']);
+      // A git older than 2.41 lets diff.noprefix reach format-patch too.
+      await g(['format-patch', '-q', '--src-prefix=a/', '--dst-prefix=b/', '-o', tmp, 'HEAD', '--not', '--remotes']);
     }
-    // The uncommitted files by name, each once, in chunks for the command line like `add -N` above. A path takes in
-    // what's under it (a file where a folder was, or the reverse): that isn't listed again, and an oversized file under
-    // it is excluded, in the same chunk. Each name `:(literal)`, as `--literal-pathspecs` would turn exclude off too.
-    const uncommitted = topmostPaths([...edits, ...added.filter((file) => !refused.includes(file))]);
-    const pathspecs = uncommitted.map((file) => [`:(literal)${file}`, ...[...big].filter((oversize) => oversize.startsWith(`${file}/`)).map((oversize) => `:(exclude,literal)${oversize}`)]);
-    for (const [index, chunk] of byCommandLength(pathspecs).entries()) {
+    // The uncommitted files by name, each change once, in runs that fit the command line like `add -N` above
+    // (diffPathspecs). Each name `:(literal)`, as `--literal-pathspecs` would turn exclude off too.
+    const runs = diffPathspecs([...edits, ...added.filter((file) => !refused.includes(file))], big);
+    for (const [index, chunk] of runs.entries()) {
       const output = path.join(tmp, `zz-uncommitted-${String(index).padStart(6, '0')}.patch`);
-      await g(['diff', 'HEAD', '--no-renames', '--binary', `--output=${output}`, '--', ...chunk]);
+      await g(['diff', 'HEAD', '--no-renames', ...patchFormat, `--output=${output}`, '--', ...chunk]);
     }
     const parts = (await fs.readdir(tmp)).sort();
     const body = Buffer.concat(await Promise.all(parts.map((part) => fs.readFile(path.join(tmp, part)))));
     if (!body.length) throw new Error('git wrote an empty patch');
+    // Written whole in the temp folder first, outside the .patch names pruning counts: a write that fails part way
+    // leaves no half patch there to keep, or to push complete ones out.
+    const staged = path.join(tmp, 'patch.staged');
+    await fs.writeFile(staged, body);
     const base = `${label}-${stamp(new Date())}`;
     // One save at a time across floors and machines: two saves of one branch would pick the same name, and a prune
-    // that runs next to another save could delete the patch that save just wrote.
+    // that runs next to another save could delete the patch that save just wrote. The name is free under the lock.
     const file = await withRepoLock('leftovers', async () => {
       let patch = path.join(dir, `${base}.patch`);
       for (let copy = 2; await exists(patch); copy++) patch = path.join(dir, `${base}-${copy}.patch`);
-      await fs.writeFile(patch, body, { flag: 'wx' });
+      await fs.rename(staged, patch);
       await pruneLeftovers(patch);
       return patch;
     });

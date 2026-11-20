@@ -35,7 +35,7 @@ process.env.GIT_CONFIG_GLOBAL = gitConfig;
 
 const { git } = await import('./exec.ts');
 const { HOME_DIR, WORKSPACE_ROOT } = await import('./config.ts');
-const { branchHolder, byCommandLength, topmostPaths, deskDir, fileList, leftoversInDesk, leftoversToPrune, listMachines, machineDesk, mainDir, overwrittenPaths, parseWorktrees, planSweep, porcelainPaths, prepareDesk, prepareMachineDesk, removeDesk, removeMachine, setLocalPath, sweepDesks, sweepMachine, syncMain: sync, trimDesk } =
+const { branchHolder, byCommandLength, diffPathspecs, deskDir, fileList, leftoversInDesk, leftoversToPrune, listMachines, machineDesk, mainDir, overwrittenPaths, parseWorktrees, planSweep, porcelainPaths, prepareDesk, prepareMachineDesk, removeDesk, removeMachine, setLocalPath, sweepDesks, sweepMachine, syncMain: sync, trimDesk } =
   await import('./workspace.ts');
 // Most tests only care about the status line.
 const syncMain = async (...args: Parameters<typeof sync>) => (await sync(...args))?.status ?? null;
@@ -554,8 +554,10 @@ describe('prepareDesk', { timeout: 60_000 }, () => {
     await fs.writeFile(path.join(desk, 'notes.txt'), 'resolved by hand\n');
     await git(['add', 'notes.txt'], { cwd: desk });
     await git(['commit', '-q', '--no-edit'], { cwd: desk });
-    // The manager's config may turn merge diffs off: the resolution must be saved even so.
+    await fs.writeFile(path.join(desk, 'README.md'), '# Test\nan uncommitted edit\n');
+    // The manager's config may turn merge diffs off, or the a/ and b/ prefixes: the patch must still apply as usual.
     await git(['config', 'log.diffMerges', 'off'], { cwd: desk });
+    await git(['config', 'diff.noprefix', 'true'], { cwd: desk });
     const notes: string[] = [];
     expect(await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'mia-6d1e', 'swarm/issue-22-mia', (text) => notes.push(text))).toBe(desk);
     const patch = await savedPatch(repos.fullName, 'swarm-issue-21-mia');
@@ -564,6 +566,20 @@ describe('prepareDesk', { timeout: 60_000 }, () => {
     await git(['checkout', '-q', `origin/${branch}`], { cwd: repos.upstream });
     await git(['apply', patch], { cwd: repos.upstream });
     expect((await fs.readFile(path.join(repos.upstream, 'notes.txt'), 'utf8')).replaceAll('\r\n', '\n')).toBe('resolved by hand\n');
+    expect((await fs.readFile(path.join(repos.upstream, 'README.md'), 'utf8')).replaceAll('\r\n', '\n')).toBe('# Test\nan uncommitted edit\n');
+  });
+
+  it('saves a new binary file byte for byte, though a textconv driver shows it as text', async () => {
+    const repos = await makeRepos();
+    const desk = await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'otto-7a1b', 'swarm/issue-70-otto');
+    const bytes = Buffer.from([0, 1, 2, 97, 98, 99, 0, 255]);
+    await fs.writeFile(path.join(desk, 'data.bin'), bytes);
+    await fs.writeFile(path.join(desk, '.gitattributes'), '*.bin diff=shown\n');
+    await git(['config', 'diff.shown.textconv', 'echo converted'], { cwd: desk });
+    expect(await prepareDesk(repos.fullName, { defaultBranch: 'main' }, 'otto-7a1b', 'swarm/issue-71-otto')).toBe(desk);
+    const patch = await savedPatch(repos.fullName, 'swarm-issue-70-otto');
+    await git(['apply', patch], { cwd: repos.upstream });
+    expect(await fs.readFile(path.join(repos.upstream, 'data.bin'))).toEqual(bytes);
   });
 
   it('saves files by their exact names: a leading space, a glob, pathspec magic, both sides of a staged rename', async () => {
@@ -590,7 +606,7 @@ describe('prepareDesk', { timeout: 60_000 }, () => {
 
   it('saves a folder that became a file with each deletion once, in a patch that applies', async () => {
     const repos = await makeRepos();
-    // The new file pkg takes in every one of the 101 deleted files (topmostPaths keeps them from being listed again).
+    // The new file pkg's pathspec would take in every one of the 101 deleted files too (diffPathspecs excludes them).
     await fs.mkdir(path.join(repos.upstream, 'pkg'));
     for (let index = 0; index <= 100; index++) await fs.writeFile(path.join(repos.upstream, 'pkg', `f-${String(index).padStart(3, '0')}.txt`), `file ${index}\n`);
     await git(['add', 'pkg'], { cwd: repos.upstream });
@@ -810,13 +826,23 @@ describe('byCommandLength', () => {
   });
 });
 
-describe('topmostPaths', () => {
-  it("drops paths under another listed one, and repeats, but keeps a sibling that only shares a prefix", () => {
-    expect(topmostPaths(['pkg/a.txt', 'pkg', 'pkg/deep/b.txt', 'pkgx/c.txt', 'other.txt', 'other.txt'])).toEqual(['pkg', 'pkgx/c.txt', 'other.txt']);
+describe('diffPathspecs', () => {
+  it('gives a path with others under it a run of its own that excludes them, and lists those by name once', () => {
+    expect(diffPathspecs(['pkg/a.txt', 'pkg', 'pkg/deep/b.txt', 'pkgx/c.txt', 'other.txt', 'other.txt'])).toEqual([
+      [':(literal)pkg', ':(exclude,literal)pkg/'],
+      [':(literal)pkg/a.txt', ':(literal)pkg/deep/b.txt', ':(literal)pkgx/c.txt', ':(literal)other.txt'],
+    ]);
   });
 
-  it('keeps every path when none is under another', () => {
-    expect(topmostPaths(['a/b.txt', 'a/c.txt', ' lead.txt'])).toEqual(['a/b.txt', 'a/c.txt', ' lead.txt']);
+  it('keeps every run within the command line when a file became a folder of many oversized files', () => {
+    const huge = Array.from({ length: 200 }, (_unused, index) => `pkg/${'very-long-name-'.repeat(12)}${index}.bin`);
+    const runs = diffPathspecs(['pkg', 'src/edit.ts'], huge);
+    expect(runs).toEqual([[':(literal)pkg', ':(exclude,literal)pkg/'], [':(literal)src/edit.ts']]);
+    expect(huge.join(' ').length).toBeGreaterThan(32_767);
+  });
+
+  it('runs by name only when nothing is under another path', () => {
+    expect(diffPathspecs(['a/b.txt', 'a/c.txt', ' lead.txt'])).toEqual([[':(literal)a/b.txt', ':(literal)a/c.txt', ':(literal) lead.txt']]);
   });
 });
 
